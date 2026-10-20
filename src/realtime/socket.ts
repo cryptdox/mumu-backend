@@ -20,6 +20,26 @@ const online = new Map<string, number>();
 
 export const isOnline = (profileId: string) => (online.get(profileId) ?? 0) > 0;
 
+/** Called (debounced) whenever who is watching a live stream changes. */
+let liveAudienceHandler: ((liveStreamId: string, userIds: Set<string>) => void) | null = null;
+export function onLiveAudienceChange(fn: (liveStreamId: string, userIds: Set<string>) => void) {
+  liveAudienceHandler = fn;
+}
+const recountTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** Viewers = distinct accounts with a socket in the stream's room, so reloads and extra tabs don't add up. */
+function recountLive(liveStreamId: string) {
+  clearTimeout(recountTimers.get(liveStreamId));
+  recountTimers.set(
+    liveStreamId,
+    setTimeout(async () => {
+      recountTimers.delete(liveStreamId);
+      if (!io || !liveAudienceHandler) return;
+      const sockets = await io.in(`live:${liveStreamId}`).fetchSockets();
+      liveAudienceHandler(liveStreamId, new Set(sockets.map((s) => s.data.userId as string)));
+    }, 300),
+  );
+}
+
 /** Viewers of a live stream (sockets that sent "live:watch"). */
 export function emitToLive(liveStreamId: string, event: string, payload: unknown) {
   io?.to(`live:${liveStreamId}`).emit(event, payload);
@@ -90,10 +110,18 @@ export function attachRealtime(server: HttpServer) {
 
     // Watching a stream = get its updates (ended, viewer count). Access is checked when joining the media.
     socket.on("live:watch", (msg: { liveStreamId?: string }) => {
-      if (typeof msg?.liveStreamId === "string" && msg.liveStreamId.length <= 64) socket.join(`live:${msg.liveStreamId}`);
+      if (typeof msg?.liveStreamId !== "string" || msg.liveStreamId.length > 64) return;
+      socket.join(`live:${msg.liveStreamId}`);
+      recountLive(msg.liveStreamId);
     });
     socket.on("live:unwatch", (msg: { liveStreamId?: string }) => {
-      if (typeof msg?.liveStreamId === "string") socket.leave(`live:${msg.liveStreamId}`);
+      if (typeof msg?.liveStreamId !== "string") return;
+      socket.leave(`live:${msg.liveStreamId}`);
+      recountLive(msg.liveStreamId);
+    });
+    // Closing the tab / reloading drops the socket — recount the streams it was watching.
+    socket.on("disconnecting", () => {
+      for (const room of socket.rooms) if (room.startsWith("live:")) recountLive(room.slice(5));
     });
 
     socket.on("disconnect", () => {
@@ -112,6 +140,8 @@ export function attachRealtime(server: HttpServer) {
 }
 
 export async function closeRealtime() {
+  for (const t of recountTimers.values()) clearTimeout(t);
+  recountTimers.clear();
   await io?.close();
   io = null;
   online.clear();

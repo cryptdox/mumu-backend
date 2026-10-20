@@ -7,7 +7,7 @@ import { canModerate } from "../../utils/permissions";
 import { issueRtcToken } from "../../utils/rtc";
 import logger from "../../utils/logger";
 import type { Actor } from "../../middlewares/actor.middleware";
-import { emitToLive, emitToProfiles } from "../../realtime/socket";
+import { emitToLive, emitToProfiles, onLiveAudienceChange } from "../../realtime/socket";
 import { profileCardSelect, toProfile } from "../profile/profile.view";
 import { canSee, viewerGraph } from "../connection/visibility";
 import { notify } from "../notification/notification.service";
@@ -84,21 +84,13 @@ class LiveService {
     if (s.status !== "LIVE") throw BadRequest("This stream has ended");
     const isHost = s.hostProfileId === actor.profileId;
     const rtc = await issueRtcToken(actor.profileId, s.rtcChannel, isHost ? "HOST" : "AUDIENCE");
-    if (isHost) return { stream: view(s), rtc };
-    const updated = await prisma.liveStream.update({ where: { liveStreamId }, data: { viewerCount: { increment: 1 } }, include });
-    if (updated.viewerCount > updated.peakViewers) await prisma.liveStream.update({ where: { liveStreamId }, data: { peakViewers: updated.viewerCount } });
-    const result = view(updated);
-    emitToLive(liveStreamId, "live:updated", result);
-    return { stream: result, rtc };
+    // The viewer count comes from live sockets ("live:watch"), not from this call.
+    return { stream: view(s), rtc };
   }
 
+  /** Kept for older clients; leaving is detected from the socket. */
   async leave(actor: Actor, liveStreamId: string) {
-    const s = await this.visible(actor, liveStreamId);
-    if (s.hostProfileId === actor.profileId || s.status !== "LIVE") return view(s);
-    await prisma.liveStream.updateMany({ where: { liveStreamId, viewerCount: { gt: 0 } }, data: { viewerCount: { decrement: 1 } } });
-    const result = view(await prisma.liveStream.findUniqueOrThrow({ where: { liveStreamId }, include }));
-    emitToLive(liveStreamId, "live:updated", result);
-    return result;
+    return view(await this.visible(actor, liveStreamId));
   }
 
   async update(actor: Actor, liveStreamId: string, dto: { title?: string; audience?: Audience }) {
@@ -124,6 +116,27 @@ class LiveService {
     return endStream(liveStreamId);
   }
 }
+
+/** Viewer count = distinct accounts watching over sockets, minus the host's own team. */
+onLiveAudienceChange(async (liveStreamId, userIds) => {
+  try {
+    const s = await prisma.liveStream.findUnique({ where: { liveStreamId }, select: { status: true, hostProfileId: true, peakViewers: true } });
+    if (!s || s.status !== "LIVE") return;
+    const team = await prisma.profileMember.findMany({ where: { profileId: s.hostProfileId }, select: { userId: true } });
+    for (const m of team) userIds.delete(m.userId);
+    const viewerCount = userIds.size;
+    const updated = await prisma.liveStream.update({
+      where: { liveStreamId },
+      data: { viewerCount, peakViewers: Math.max(s.peakViewers, viewerCount) },
+      include,
+    });
+    const result = view(updated);
+    emitToLive(liveStreamId, "live:updated", result);
+    emitToProfiles([updated.hostProfileId], "live:updated", result);
+  } catch (err: any) {
+    logger.warn(`[Live] recount ${liveStreamId}: ${err?.message ?? err}`);
+  }
+});
 
 export async function endStream(liveStreamId: string) {
   const updated = await prisma.liveStream.update({ where: { liveStreamId }, data: { status: "ENDED", endedAt: new Date(), viewerCount: 0 }, include });

@@ -505,10 +505,31 @@ describe("live (MUMU RTC)", () => {
     assert.deepEqual(ok(await api("GET", "/api/live", { token: lou.token })), []);
     assert.equal((await api("POST", `/api/live/${live.stream.liveStreamId}/watch`, { token: lou.token })).status, 404);
 
-    kaiSocket.emit("live:watch", { liveStreamId: live.stream.liveStreamId });
-    const watch = ok(await api("POST", `/api/live/${live.stream.liveStreamId}/watch`, { token: kai.token }));
+    const sid = live.stream.liveStreamId;
+    const counted = (n: number) => next(kaiSocket, "live:updated", (s) => s.liveStreamId === sid && s.viewerCount === n);
+    let update = counted(1);
+    kaiSocket.emit("live:watch", { liveStreamId: sid });
+    const watch = ok(await api("POST", `/api/live/${sid}/watch`, { token: kai.token }));
     assert.equal(watch.rtc.role, "AUDIENCE");
-    assert.equal(watch.stream.viewerCount, 1);
+    assert.equal((await update).viewerCount, 1);
+    // Reloading / a second tab of the same person doesn't count twice…
+    const kaiTab2 = await connect(kai);
+    kaiTab2.emit("live:watch", { liveStreamId: sid });
+    kaiTab2.disconnect();
+    await new Promise((r) => setTimeout(r, 700));
+    assert.equal(ok(await api("GET", `/api/live/${sid}`, { token: kai.token })).viewerCount, 1);
+    // …and the host's own screen isn't a viewer.
+    const jaySocket = await connect(jay);
+    jaySocket.emit("live:watch", { liveStreamId: sid });
+    await new Promise((r) => setTimeout(r, 700));
+    assert.equal(ok(await api("GET", `/api/live/${sid}`, { token: kai.token })).viewerCount, 1);
+    // Leaving (unwatch, or the socket dropping) takes them off the count; the host sees it live.
+    const hostSees0 = next(jaySocket, "live:updated", (s) => s.liveStreamId === sid && s.viewerCount === 0);
+    kaiSocket.emit("live:unwatch", { liveStreamId: sid });
+    assert.equal((await hostSees0).viewerCount, 0);
+    update = counted(1);
+    kaiSocket.emit("live:watch", { liveStreamId: sid });
+    await update;
     const post = ok(await api("GET", `/api/posts/${live.stream.postId}`, { token: kai.token }));
     assert.equal(post.liveStream.status, "LIVE");
 
