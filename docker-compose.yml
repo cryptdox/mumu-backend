@@ -1,0 +1,29 @@
+# Local stack: the API with its own Postgres. IAM's Redis and MUMU RTC are
+# external — set IAM_REDIS_URL / MUMU_RTC_* in .env.
+services:
+  api:
+    build: .
+    ports:
+      - "4100:4100"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/mumu
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-supabase}
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: mumu
+    ports:
+      - "5435:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:

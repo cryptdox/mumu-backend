@@ -1,0 +1,6 @@
+allowBuilds:
+  '@prisma/engines': true
+  '@scarf/scarf': true
+  bcrypt: true
+  core-js: true
+  prisma: true

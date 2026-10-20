@@ -1,0 +1,10 @@
+node_modules
+dist
+package-lock.json
+uploads
+# Env files hold credentials — only the template is committed
+.env
+.env.*
+!example.env
+scripts/.iam.env
+scripts/demo-sessions.json

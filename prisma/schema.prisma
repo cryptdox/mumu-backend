@@ -1,0 +1,410 @@
+// MuMu — messaging-first social app on MUMU RTC. Auth: crypt-iam (client "mu").
+// Every action is done AS a profile (personal or business); accounts = IAM users.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ── Profiles ────────────────────────────────────────────────────────────────
+
+enum ProfileKind {
+  PERSONAL // the consumer side — one per account, created on first sign-in
+  BUSINESS // the producer side — pages for a business, brand or creator
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN // everything except deleting the profile / changing owners
+  EDITOR // post, chat, go live as the profile
+}
+
+model Profile {
+  profileId     String      @id @default(uuid())
+  kind          ProfileKind
+  handle        String      @unique // @name, lowercase
+  displayName   String
+  bio           String?
+  category      String? // business category ("Bakery", "Software")
+  website       String?
+  avatarMediaId String?
+  coverMediaId  String?
+  isVerified    Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  deletedAt     DateTime?
+
+  avatar  Media?          @relation("ProfileAvatar", fields: [avatarMediaId], references: [mediaId], onDelete: SetNull)
+  cover   Media?          @relation("ProfileCover", fields: [coverMediaId], references: [mediaId], onDelete: SetNull)
+  members ProfileMember[]
+  media   Media[]         @relation("MediaOwner")
+
+  friendRequestsSent     Friendship[]   @relation("FriendRequester")
+  friendRequestsReceived Friendship[]   @relation("FriendAddressee")
+  following              Follow[]       @relation("Follower")
+  followers              Follow[]       @relation("Followee")
+  blocking               Block[]        @relation("Blocker")
+  blockedBy              Block[]        @relation("Blocked")
+  posts                  Post[]
+  comments               Comment[]
+  reactions              Reaction[]
+  conversations          ConversationMember[]
+  messages               Message[]
+  callsStarted           Call[]
+  liveStreams            LiveStream[]
+  notifications          Notification[] @relation("NotificationRecipient")
+  notificationsCaused    Notification[] @relation("NotificationActor")
+  reports                Report[]
+
+  @@index([kind])
+}
+
+/// Who may act as a profile. A personal profile has exactly one OWNER (its account).
+model ProfileMember {
+  profileId String
+  userId    String // IAM user id
+  role      MemberRole
+  createdAt DateTime   @default(now())
+
+  profile Profile @relation(fields: [profileId], references: [profileId], onDelete: Cascade)
+
+  @@id([profileId, userId])
+  @@index([userId])
+}
+
+// ── Connections ─────────────────────────────────────────────────────────────
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+}
+
+/// Mutual, between personal profiles. Declining / unfriending deletes the row.
+model Friendship {
+  requesterId String
+  addresseeId String
+  status      FriendshipStatus @default(PENDING)
+  createdAt   DateTime         @default(now())
+  respondedAt DateTime?
+
+  requester Profile @relation("FriendRequester", fields: [requesterId], references: [profileId], onDelete: Cascade)
+  addressee Profile @relation("FriendAddressee", fields: [addresseeId], references: [profileId], onDelete: Cascade)
+
+  @@id([requesterId, addresseeId])
+  @@index([addresseeId, status])
+}
+
+/// One-way. Any profile can follow any other.
+model Follow {
+  followerId String
+  followeeId String
+  createdAt  DateTime @default(now())
+
+  follower Profile @relation("Follower", fields: [followerId], references: [profileId], onDelete: Cascade)
+  followee Profile @relation("Followee", fields: [followeeId], references: [profileId], onDelete: Cascade)
+
+  @@id([followerId, followeeId])
+  @@index([followeeId])
+}
+
+/// Blocked profiles can't message, friend, follow or see each other's non-public content.
+model Block {
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+
+  blocker Profile @relation("Blocker", fields: [blockerId], references: [profileId], onDelete: Cascade)
+  blocked Profile @relation("Blocked", fields: [blockedId], references: [profileId], onDelete: Cascade)
+
+  @@id([blockerId, blockedId])
+  @@index([blockedId])
+}
+
+// ── Media ───────────────────────────────────────────────────────────────────
+
+/// An uploaded image (≤ 1 MB) in the public storage bucket.
+model Media {
+  mediaId        String   @id @default(uuid())
+  ownerProfileId String
+  path           String   @unique // object key in the bucket
+  url            String // public URL
+  mime           String
+  bytes          Int
+  width          Int?
+  height         Int?
+  createdAt      DateTime @default(now())
+
+  owner          Profile    @relation("MediaOwner", fields: [ownerProfileId], references: [profileId], onDelete: Cascade)
+  posts          Post[]
+  messages       Message[]
+  avatarOf       Profile[]  @relation("ProfileAvatar")
+  coverOf        Profile[]  @relation("ProfileCover")
+  conversationOf Conversation[]
+
+  @@index([ownerProfileId])
+}
+
+// ── Feed ────────────────────────────────────────────────────────────────────
+
+enum Audience {
+  PUBLIC
+  CONNECTIONS // friends (personal profile) or followers (business profile)
+  ONLY_ME
+}
+
+model Post {
+  postId          String    @id @default(uuid())
+  authorProfileId String
+  text            String? // ≤ 500 chars
+  mediaId         String?
+  audience        Audience  @default(PUBLIC)
+  liveStreamId    String?   @unique // "is live now" post
+  reactionCount   Int       @default(0)
+  commentCount    Int       @default(0)
+  createdAt       DateTime  @default(now())
+  editedAt        DateTime?
+  deletedAt       DateTime?
+
+  author     Profile     @relation(fields: [authorProfileId], references: [profileId], onDelete: Cascade)
+  media      Media?      @relation(fields: [mediaId], references: [mediaId], onDelete: SetNull)
+  liveStream LiveStream? @relation(fields: [liveStreamId], references: [liveStreamId], onDelete: SetNull)
+  comments   Comment[]
+  reactions  Reaction[]
+
+  @@index([authorProfileId, createdAt])
+  @@index([createdAt])
+}
+
+model Comment {
+  commentId       String    @id @default(uuid())
+  postId          String
+  authorProfileId String
+  parentId        String? // one level of replies
+  text            String // ≤ 500 chars
+  createdAt       DateTime  @default(now())
+  editedAt        DateTime?
+  deletedAt       DateTime?
+
+  post    Post      @relation(fields: [postId], references: [postId], onDelete: Cascade)
+  author  Profile   @relation(fields: [authorProfileId], references: [profileId], onDelete: Cascade)
+  parent  Comment?  @relation("CommentReplies", fields: [parentId], references: [commentId], onDelete: Cascade)
+  replies Comment[] @relation("CommentReplies")
+
+  @@index([postId, createdAt])
+}
+
+enum ReactionType {
+  LIKE
+  LOVE
+  HAHA
+  WOW
+  SAD
+}
+
+model Reaction {
+  postId    String
+  profileId String
+  type      ReactionType @default(LIKE)
+  createdAt DateTime     @default(now())
+
+  post    Post    @relation(fields: [postId], references: [postId], onDelete: Cascade)
+  profile Profile @relation(fields: [profileId], references: [profileId], onDelete: Cascade)
+
+  @@id([postId, profileId])
+}
+
+// ── Chats ───────────────────────────────────────────────────────────────────
+
+enum ConversationType {
+  DIRECT
+  GROUP
+}
+
+enum ConversationRole {
+  ADMIN
+  MEMBER
+}
+
+model Conversation {
+  conversationId String           @id @default(uuid())
+  type           ConversationType
+  title          String? // groups
+  avatarMediaId  String?
+  directKey      String?          @unique // DIRECT: "<smaller profileId>:<larger profileId>"
+  createdById    String
+  lastMessageAt  DateTime         @default(now())
+  createdAt      DateTime         @default(now())
+
+  avatar   Media?               @relation(fields: [avatarMediaId], references: [mediaId], onDelete: SetNull)
+  members  ConversationMember[]
+  messages Message[]
+  calls    Call[]
+
+  @@index([lastMessageAt])
+}
+
+model ConversationMember {
+  conversationId    String
+  profileId         String
+  role              ConversationRole @default(MEMBER)
+  lastReadMessageId String?
+  lastReadAt        DateTime?
+  mutedUntil        DateTime?
+  joinedAt          DateTime         @default(now())
+  leftAt            DateTime?
+
+  conversation Conversation @relation(fields: [conversationId], references: [conversationId], onDelete: Cascade)
+  profile      Profile      @relation(fields: [profileId], references: [profileId], onDelete: Cascade)
+
+  @@id([conversationId, profileId])
+  @@index([profileId])
+}
+
+enum MessageKind {
+  TEXT // text and/or one image
+  CALL // a call started / ended
+  SYSTEM // "Alice added Bob"
+}
+
+model Message {
+  messageId       String      @id @default(uuid())
+  conversationId  String
+  senderProfileId String
+  kind            MessageKind @default(TEXT)
+  text            String? // ≤ 500 chars
+  mediaId         String?
+  replyToId       String?
+  callId          String?
+  createdAt       DateTime    @default(now())
+  editedAt        DateTime?
+  deletedAt       DateTime?
+
+  conversation Conversation @relation(fields: [conversationId], references: [conversationId], onDelete: Cascade)
+  sender       Profile      @relation(fields: [senderProfileId], references: [profileId], onDelete: Cascade)
+  media        Media?       @relation(fields: [mediaId], references: [mediaId], onDelete: SetNull)
+  replyTo      Message?     @relation("MessageReplies", fields: [replyToId], references: [messageId], onDelete: SetNull)
+  replies      Message[]    @relation("MessageReplies")
+  call         Call?        @relation(fields: [callId], references: [callId], onDelete: SetNull)
+
+  @@index([conversationId, createdAt])
+}
+
+// ── Calls & live ────────────────────────────────────────────────────────────
+
+enum CallType {
+  AUDIO
+  VIDEO
+}
+
+enum CallStatus {
+  RINGING
+  ONGOING
+  ENDED
+  MISSED
+}
+
+/// A call inside a conversation. RTC channel = "c_<conversationId>".
+model Call {
+  callId         String     @id @default(uuid())
+  conversationId String
+  startedById    String
+  type           CallType
+  status         CallStatus @default(RINGING)
+  rtcChannel     String
+  startedAt      DateTime   @default(now())
+  answeredAt     DateTime?
+  endedAt        DateTime?
+
+  conversation Conversation @relation(fields: [conversationId], references: [conversationId], onDelete: Cascade)
+  startedBy    Profile      @relation(fields: [startedById], references: [profileId], onDelete: Cascade)
+  messages     Message[]
+
+  @@index([conversationId, startedAt])
+}
+
+enum LiveStatus {
+  LIVE
+  ENDED
+}
+
+/// RTC channel = "live_<hostProfileId>" (reused per host): the host publishes, viewers join as AUDIENCE. No recording.
+model LiveStream {
+  liveStreamId  String     @id @default(uuid())
+  hostProfileId String
+  title         String
+  audience      Audience   @default(PUBLIC)
+  status        LiveStatus @default(LIVE)
+  rtcChannel    String
+  viewerCount   Int        @default(0)
+  peakViewers   Int        @default(0)
+  startedAt     DateTime   @default(now())
+  endedAt       DateTime?
+
+  host Profile @relation(fields: [hostProfileId], references: [profileId], onDelete: Cascade)
+  post Post?
+
+  @@index([status, startedAt])
+  @@index([hostProfileId])
+}
+
+// ── Notifications & moderation ──────────────────────────────────────────────
+
+enum NotificationType {
+  FRIEND_REQUEST
+  FRIEND_ACCEPTED
+  NEW_FOLLOWER
+  POST_REACTION
+  POST_COMMENT
+  COMMENT_REPLY
+  LIVE_STARTED
+  MISSED_CALL
+  ADDED_TO_GROUP
+}
+
+model Notification {
+  notificationId     String           @id @default(uuid())
+  recipientProfileId String
+  actorProfileId     String?
+  type               NotificationType
+  entityId           String? // postId / liveStreamId / conversationId …
+  createdAt          DateTime         @default(now())
+  readAt             DateTime?
+
+  recipient Profile  @relation("NotificationRecipient", fields: [recipientProfileId], references: [profileId], onDelete: Cascade)
+  actor     Profile? @relation("NotificationActor", fields: [actorProfileId], references: [profileId], onDelete: Cascade)
+
+  @@index([recipientProfileId, createdAt])
+}
+
+enum ReportTarget {
+  PROFILE
+  POST
+  COMMENT
+  MESSAGE
+  LIVE
+}
+
+enum ReportStatus {
+  OPEN
+  ACTIONED
+  DISMISSED
+}
+
+model Report {
+  reportId           String       @id @default(uuid())
+  reporterProfileId  String
+  targetType         ReportTarget
+  targetId           String
+  reason             String
+  status             ReportStatus @default(OPEN)
+  resolvedByUserId   String?
+  resolvedAt         DateTime?
+  createdAt          DateTime     @default(now())
+
+  reporter Profile @relation(fields: [reporterProfileId], references: [profileId], onDelete: Cascade)
+
+  @@index([status, createdAt])
+}

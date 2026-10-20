@@ -1,0 +1,30 @@
+{
+  "_comment": "MU_* permissions per IAM role of client \"mu\". \"*\" = all five actions. READ_ALL on a content resource = moderator (may delete anyone's). Additive: the setup script never removes grants. Also used by the integration tests.",
+  "ADMIN": {
+    "MU_PROFILE": "*", "MU_CONNECTION": "*", "MU_POST": "*", "MU_COMMENT": "*", "MU_REACTION": "*", "MU_MEDIA": "*",
+    "MU_CONVERSATION": "*", "MU_MESSAGE": "*", "MU_CALL": "*", "MU_LIVE": "*", "MU_NOTIFICATION": "*", "MU_REPORT": "*"
+  },
+  "MANAGER": {
+    "MU_PROFILE": ["CREATE", "READ", "UPDATE", "DELETE"], "MU_CONNECTION": ["CREATE", "READ", "UPDATE", "DELETE"],
+    "MU_POST": "*", "MU_COMMENT": "*", "MU_REACTION": ["CREATE", "READ", "UPDATE", "DELETE"], "MU_MEDIA": ["CREATE", "READ", "UPDATE", "DELETE"],
+    "MU_CONVERSATION": ["CREATE", "READ", "UPDATE", "DELETE"], "MU_MESSAGE": "*", "MU_CALL": ["CREATE", "READ", "UPDATE", "DELETE"],
+    "MU_LIVE": "*", "MU_NOTIFICATION": ["CREATE", "READ", "UPDATE", "DELETE"], "MU_REPORT": ["CREATE", "READ", "READ_ALL", "UPDATE"]
+  },
+  "VIEWER": {
+    "MU_PROFILE": ["READ"], "MU_CONNECTION": ["READ"], "MU_POST": ["READ"], "MU_COMMENT": ["READ"], "MU_REACTION": ["READ"], "MU_MEDIA": ["READ"],
+    "MU_CONVERSATION": ["READ"], "MU_MESSAGE": ["READ"], "MU_CALL": ["READ"], "MU_LIVE": ["READ"], "MU_NOTIFICATION": ["READ"]
+  },
+  "AUDITOR": {
+    "MU_PROFILE": ["READ", "READ_ALL"], "MU_CONNECTION": ["READ", "READ_ALL"], "MU_POST": ["READ", "READ_ALL"], "MU_COMMENT": ["READ", "READ_ALL"],
+    "MU_REACTION": ["READ", "READ_ALL"], "MU_MEDIA": ["READ", "READ_ALL"], "MU_CONVERSATION": ["READ", "READ_ALL"], "MU_MESSAGE": ["READ", "READ_ALL"],
+    "MU_CALL": ["READ", "READ_ALL"], "MU_LIVE": ["READ", "READ_ALL"], "MU_NOTIFICATION": ["READ", "READ_ALL"], "MU_REPORT": ["READ", "READ_ALL"]
+  },
+  "USER": {
+    "MU_PROFILE": ["CREATE", "READ", "UPDATE", "DELETE"], "MU_CONNECTION": ["CREATE", "READ", "UPDATE", "DELETE"],
+    "MU_POST": ["CREATE", "READ", "UPDATE", "DELETE"], "MU_COMMENT": ["CREATE", "READ", "UPDATE", "DELETE"],
+    "MU_REACTION": ["CREATE", "READ", "UPDATE", "DELETE"], "MU_MEDIA": ["CREATE", "READ", "UPDATE", "DELETE"],
+    "MU_CONVERSATION": ["CREATE", "READ", "UPDATE", "DELETE"], "MU_MESSAGE": ["CREATE", "READ", "UPDATE", "DELETE"],
+    "MU_CALL": ["CREATE", "READ", "UPDATE", "DELETE"], "MU_LIVE": ["CREATE", "READ", "UPDATE", "DELETE"],
+    "MU_NOTIFICATION": ["CREATE", "READ", "UPDATE", "DELETE"], "MU_REPORT": ["CREATE"]
+  }
+}
