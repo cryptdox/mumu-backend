@@ -8,6 +8,7 @@ import { issueRtcToken } from "../../utils/rtc";
 import logger from "../../utils/logger";
 import type { Actor } from "../../middlewares/actor.middleware";
 import { emitToLive, emitToProfiles, onLiveAudienceChange } from "../../realtime/socket";
+import { AppError } from "../../utils/errors";
 import { profileCardSelect, toProfile } from "../profile/profile.view";
 import { canSee, viewerGraph } from "../connection/visibility";
 import { notify } from "../notification/notification.service";
@@ -18,7 +19,7 @@ const channelFor = (hostProfileId: string) => `live_${hostProfileId}`;
 const include = { host: { select: profileCardSelect }, post: { select: { postId: true } } } as const;
 type LiveRow = Prisma.LiveStreamGetPayload<{ include: typeof include }>;
 
-const view = ({ host, post, rtcChannel: _c, ...s }: LiveRow) => ({ ...s, host: toProfile(host), postId: post?.postId ?? null });
+const view = ({ host, post, rtcChannel: _c, hostDeviceId: _d, ...s }: LiveRow) => ({ ...s, host: toProfile(host), postId: post?.postId ?? null });
 
 /** People who'd want to know: friends of a person, followers of anyone. */
 async function audienceOf(hostId: string, audience: Audience) {
@@ -38,7 +39,7 @@ class LiveService {
     const rtcChannel = channelFor(actor.profileId);
     const rtc = await issueRtcToken(actor.profileId, rtcChannel, "HOST");
     const stream = await prisma.liveStream.create({
-      data: { hostProfileId: actor.profileId, title, audience, rtcChannel, post: { create: { authorProfileId: actor.profileId, text: title, audience } } },
+      data: { hostProfileId: actor.profileId, title, audience, rtcChannel, hostDeviceId: actor.deviceId, post: { create: { authorProfileId: actor.profileId, text: title, audience } } },
       include,
     });
     const result = view(stream);
@@ -78,11 +79,22 @@ class LiveService {
     return view(await this.visible(actor, liveStreamId));
   }
 
-  /** Watch (AUDIENCE: receive only). The host rejoining gets a HOST token. */
-  async watch(actor: Actor, liveStreamId: string) {
+  /**
+   * Watch (AUDIENCE: receive only). The host gets a HOST token — but only on the device
+   * that's broadcasting. From another device: 409 LIVE_ON_OTHER_DEVICE, unless `takeover`,
+   * which moves the live here and tells the old device to step off ("live:takeover").
+   */
+  async watch(actor: Actor, liveStreamId: string, takeover = false) {
     const s = await this.visible(actor, liveStreamId);
     if (s.status !== "LIVE") throw BadRequest("This stream has ended");
     const isHost = s.hostProfileId === actor.profileId;
+    if (isHost && actor.deviceId && s.hostDeviceId && s.hostDeviceId !== actor.deviceId) {
+      if (!takeover) throw new AppError(409, "You're live on another device", { code: "LIVE_ON_OTHER_DEVICE" });
+      await prisma.liveStream.update({ where: { liveStreamId }, data: { hostDeviceId: actor.deviceId } });
+      emitToProfiles([s.hostProfileId], "live:takeover", { liveStreamId, deviceId: actor.deviceId });
+    } else if (isHost && actor.deviceId && !s.hostDeviceId) {
+      await prisma.liveStream.update({ where: { liveStreamId }, data: { hostDeviceId: actor.deviceId } });
+    }
     const rtc = await issueRtcToken(actor.profileId, s.rtcChannel, isHost ? "HOST" : "AUDIENCE");
     // The viewer count comes from live sockets ("live:watch"), not from this call.
     return { stream: view(s), rtc };

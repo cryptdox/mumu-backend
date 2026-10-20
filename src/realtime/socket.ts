@@ -51,6 +51,10 @@ export function emitToProfiles(profileIds: Iterable<string>, event: string, payl
   if (rooms.length) io.to(rooms).emit(event, payload);
 }
 
+export function emitToUser(userId: string, event: string, payload: unknown) {
+  io?.to(`user:${userId}`).emit(event, payload);
+}
+
 /** A new profile became available to an account (e.g. made admin of a page). */
 export function joinProfileRoom(userId: string, profileId: string) {
   io?.in(`user:${userId}`).socketsJoin(`profile:${profileId}`);

@@ -61,11 +61,14 @@ const title = z.string().trim().min(1).max(100);
  * /api/live/{liveStreamId}/watch:
  *   post:
  *     tags: [Live]
- *     summary: Get a token to watch (host gets a HOST token to rejoin)
+ *     summary: Get a token to watch. The host gets a HOST token on the broadcasting device; from another device 409 LIVE_ON_OTHER_DEVICE unless takeover=true.
  *     parameters:
  *       - { name: liveStreamId, in: path, required: true, schema: { type: string } }
+ *     requestBody:
+ *       content: { application/json: { schema: { type: object, properties: { takeover: { type: boolean, default: false } } } } }
  *     responses:
  *       200: { description: "{ stream, rtc }" }
+ *       409: { description: "LIVE_ON_OTHER_DEVICE — ask, then retry with takeover: true" }
  * /api/live/{liveStreamId}/leave:
  *   post:
  *     tags: [Live]
@@ -95,8 +98,8 @@ router.get("/:liveStreamId", guard(R.LIVE, A.READ), sid, asyncHandler(async (req
 router.patch("/:liveStreamId", guard(R.LIVE, A.UPDATE), validate({ params: idParam("liveStreamId"), body: z.object({ title, audience: audienceSchema }).partial().refine((v) => Object.keys(v).length > 0, "Nothing to update") }), asyncHandler(async (req, res) => {
   send(res, 200, "Stream updated", await liveService.update(req.actor!, req.params.liveStreamId as string, req.body));
 }));
-router.post("/:liveStreamId/watch", writeLimiter, guard(R.LIVE, A.READ), sid, asyncHandler(async (req, res) => {
-  send(res, 200, "Watching", await liveService.watch(req.actor!, req.params.liveStreamId as string));
+router.post("/:liveStreamId/watch", writeLimiter, guard(R.LIVE, A.READ), validate({ params: idParam("liveStreamId"), body: z.object({ takeover: z.boolean().default(false) }) }), asyncHandler(async (req, res) => {
+  send(res, 200, "Watching", await liveService.watch(req.actor!, req.params.liveStreamId as string, req.body.takeover));
 }));
 router.post("/:liveStreamId/leave", guard(R.LIVE, A.READ), sid, asyncHandler(async (req, res) => {
   send(res, 200, "Left", await liveService.leave(req.actor!, req.params.liveStreamId as string));

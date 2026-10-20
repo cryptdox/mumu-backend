@@ -58,8 +58,9 @@ async function login(userId: string, role = "USER", extra: string[] = []): Promi
   return { token, userId, personalId: personal.profileId, handle: personal.handle };
 }
 
-async function api(method: string, url: string, opts: { token?: string; body?: unknown; as?: string; form?: FormData } = {}) {
+async function api(method: string, url: string, opts: { token?: string; body?: unknown; as?: string; form?: FormData; device?: string } = {}) {
   const headers: Record<string, string> = {};
+  if (opts.device) headers["x-device-id"] = opts.device;
   if (opts.token) headers.authorization = `Bearer ${opts.token}`;
   if (opts.as) headers["x-profile-id"] = opts.as;
   let body: any;
@@ -554,5 +555,59 @@ describe("moderation", () => {
     ok(await api("PATCH", `/api/reports/${report.reportId}`, { token: mod.token, body: { status: "ACTIONED" } }));
     assert.equal((await api("GET", `/api/posts/${post.postId}`, { token: mia.token })).status, 404);
     assert.equal((await api("POST", "/api/reports", { token: nia.token, body: { targetType: "POST", targetId: "nope", reason: "x" } })).status, 404);
+  });
+});
+
+describe("devices", () => {
+  test("at most 3 devices; a 4th can list and sign one out; signed-out devices are told and blocked", async () => {
+    const vee = await login("vee");
+    const dev = (n: number) => `device-vee-${n}`;
+    for (const n of [1, 2, 3]) ok(await api("GET", "/api/me", { token: vee.token, device: dev(n) }));
+    const fourth = await api("GET", "/api/posts/feed", { token: vee.token, device: dev(4) });
+    assert.equal(fourth.status, 403);
+    assert.equal(fourth.body.errors.code, "DEVICE_LIMIT");
+    assert.equal(fourth.body.errors.devices.length, 3);
+    // Requests without a device id (scripts, Swagger) aren't limited.
+    ok(await api("GET", "/api/posts/feed", { token: vee.token }));
+
+    // The blocked device can still see the list and sign another device out.
+    const list = ok(await api("GET", "/api/me/devices", { token: vee.token, device: dev(4) }));
+    assert.equal(list.devices.length, 3);
+    const s1 = await connect(vee);
+    const told = next(s1, "device:signed-out");
+    ok(await api("DELETE", `/api/me/devices/${dev(1)}`, { token: vee.token, device: dev(4) }));
+    assert.equal((await told).deviceId, dev(1));
+    ok(await api("GET", "/api/posts/feed", { token: vee.token, device: dev(4) }));
+    const blocked = await api("GET", "/api/posts/feed", { token: vee.token, device: dev(1) });
+    assert.equal(blocked.status, 401);
+    assert.equal(blocked.body.errors.code, "DEVICE_SIGNED_OUT");
+
+    // Signing in again on device 1 (a newer token) counts as a new device → over the limit.
+    const fresh = jwt.sign({ userId: "vee", email: "vee@test.local", realmId: REALM_ID, iat: Math.floor(Date.now() / 1000) + 5 }, REALM_SECRET, { algorithm: "HS256" });
+    const again = await api("GET", "/api/me", { token: fresh, device: dev(1) });
+    assert.equal(again.body.errors.code, "DEVICE_LIMIT");
+    ok(await api("DELETE", `/api/me/devices/${dev(2)}`, { token: vee.token, device: dev(3) }));
+    ok(await api("GET", "/api/me", { token: fresh, device: dev(1) }));
+  });
+
+  test("a host opening their live on another device is asked first, and can take it over", async () => {
+    const wyn = await login("wyn");
+    const [phone, laptop] = ["device-wyn-phone", "device-wyn-laptop"];
+    const live = ok(await api("POST", "/api/live", { token: wyn.token, device: phone, body: { title: "From my phone" } }), 201);
+    const sid = live.stream.liveStreamId;
+    assert.equal(ok(await api("POST", `/api/live/${sid}/watch`, { token: wyn.token, device: phone })).rtc.role, "HOST");
+
+    const elsewhere = await api("POST", `/api/live/${sid}/watch`, { token: wyn.token, device: laptop });
+    assert.equal(elsewhere.status, 409);
+    assert.equal(elsewhere.body.errors.code, "LIVE_ON_OTHER_DEVICE");
+
+    const phoneSocket = await connect(wyn);
+    const moved = next(phoneSocket, "live:takeover");
+    const taken = ok(await api("POST", `/api/live/${sid}/watch`, { token: wyn.token, device: laptop, body: { takeover: true } }));
+    assert.equal(taken.rtc.role, "HOST");
+    assert.deepEqual(await moved, { liveStreamId: sid, deviceId: laptop });
+    // Now the phone is the "other device".
+    assert.equal((await api("POST", `/api/live/${sid}/watch`, { token: wyn.token, device: phone })).status, 409);
+    ok(await api("POST", `/api/live/${sid}/end`, { token: wyn.token, device: laptop }));
   });
 });

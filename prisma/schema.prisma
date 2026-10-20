@@ -9,6 +9,20 @@ datasource db {
   provider = "postgresql"
 }
 
+// ── Devices ─────────────────────────────────────────────────────────────────
+
+/// A browser / phone an account uses (x-device-id). At most 3 active per account.
+model Device {
+  userId     String // IAM user id
+  deviceId   String // random id the app keeps in local storage (shared by accounts on one browser)
+  label      String // "Chrome on Android"
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime? // signed out (from this or another device)
+
+  @@id([userId, deviceId])
+}
+
 // ── Profiles ────────────────────────────────────────────────────────────────
 
 enum ProfileKind {
@@ -338,6 +352,8 @@ model LiveStream {
   audience      Audience   @default(PUBLIC)
   status        LiveStatus @default(LIVE)
   rtcChannel    String
+  /// The device broadcasting right now (x-device-id). Another device of the host must take over.
+  hostDeviceId  String?
   viewerCount   Int        @default(0)
   peakViewers   Int        @default(0)
   startedAt     DateTime   @default(now())

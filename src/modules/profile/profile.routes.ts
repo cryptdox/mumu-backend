@@ -6,6 +6,9 @@ import { asyncHandler } from "../../utils/errors";
 import { guard, R, A } from "../../utils/guard";
 import { idParam, send, validate } from "../../utils/http";
 import profileService from "./profile.service";
+import deviceService from "../device/device.service";
+import { deviceMiddleware } from "../../middlewares/device.middleware";
+import { deviceIdOf } from "../device/device.service";
 import { addMemberSchema, createBusinessSchema, searchQuery, updateProfileSchema } from "./profile.dto";
 
 const router: Router = express.Router();
@@ -25,8 +28,35 @@ router.use(authMiddleware, actorMiddleware);
  *       200: { description: "{ userId, email, profiles: [Profile & { role }] }" }
  */
 export const meRouter: Router = express.Router();
-meRouter.get("/", authMiddleware, asyncHandler(async (req, res) => {
+meRouter.get("/", authMiddleware, deviceMiddleware, asyncHandler(async (req, res) => {
   send(res, 200, "Account fetched", await profileService.me(req.user!.userId, req.user!.email));
+}));
+
+/**
+ * @openapi
+ * /api/me/devices:
+ *   get:
+ *     tags: [Profile]
+ *     summary: Devices signed in to your account (max 3). Works even when this device is over the limit.
+ *     parameters:
+ *       - { name: x-device-id, in: header, schema: { type: string }, description: This device (marked current) }
+ *     responses:
+ *       200: { description: "{ max, devices: [{ deviceId, label, signedInAt, lastSeenAt, current }] }" }
+ * /api/me/devices/{deviceId}:
+ *   delete:
+ *     tags: [Profile]
+ *     summary: Sign a device out (this one, or remotely — it's signed out live over its socket)
+ *     parameters:
+ *       - { name: deviceId, in: path, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Signed out }
+ */
+meRouter.get("/devices", authMiddleware, asyncHandler(async (req, res) => {
+  send(res, 200, "Devices fetched", await deviceService.list(req.user!.userId, deviceIdOf(req)));
+}));
+meRouter.delete("/devices/:deviceId", authMiddleware, validate({ params: idParam("deviceId") }), asyncHandler(async (req, res) => {
+  await deviceService.signOut(req.user!.userId, req.params.deviceId as string);
+  send(res, 200, "Device signed out");
 }));
 
 /**
