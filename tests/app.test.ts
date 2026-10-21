@@ -690,7 +690,7 @@ describe("admin", () => {
 });
 
 describe("account deletion", () => {
-  test("deleting your MuMu account removes your profiles and their content; others are untouched", async () => {
+  test("deleting your Mu account removes your profiles and their content; others are untouched", async () => {
     const zed = await login("zed");
     const yan = await login("yan");
     const shop = ok(await api("POST", "/api/profiles", { token: zed.token, body: { handle: "zedshop", displayName: "Zed Shop" } }), 201);

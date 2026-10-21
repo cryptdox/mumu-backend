@@ -182,7 +182,7 @@ class ProfileService {
   }
 
   /**
-   * Delete your MuMu account: every profile you OWN (consumer + providers) goes with all its
+   * Delete your Mu account: every profile you OWN (consumer + providers) goes with all its
    * content (posts, comments, reactions, messages, calls, lives, images, connections —
    * cascades); you're removed from profiles you only help run; your devices are forgotten.
    * Your Cryptdox (IAM) sign-in is shared with other apps and is not touched here.
@@ -212,7 +212,7 @@ class ProfileService {
     }
     for (const m of media) await storage.remove(m.path).catch(() => undefined);
     for (const id of ids) leaveProfileRoom(userId, id);
-    logger.info(`[Account] deleted MuMu data of ${userId}: ${ids.length} profile(s), ${media.length} image(s)`);
+    logger.info(`[Account] deleted Mu data of ${userId}: ${ids.length} profile(s), ${media.length} image(s)`);
     return { deletedProfiles: ids.length };
   }
 

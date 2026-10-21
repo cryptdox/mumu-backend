@@ -20,7 +20,7 @@ export const swaggerSpec = swaggerJsdoc({
   definition: {
     openapi: "3.0.0",
     info: {
-      title: "MuMu API",
+      title: "Mu API",
       version: "1.0.0",
       description: "Messaging-first social app on MUMU RTC. Sign in with crypt-iam (client `mu`); set `x-profile-id` to act as one of your business profiles.",
     },

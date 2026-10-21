@@ -52,7 +52,7 @@ export async function admitDevice(userId: string, deviceId: string, tokenIssuedA
   if (!isActive) {
     const others = await prisma.device.findMany({ where: { ...activeWhere(userId), deviceId: { not: deviceId } }, orderBy: { lastSeenAt: "desc" } });
     if (others.length >= MAX_DEVICES) {
-      throw new AppError(403, `You're signed in on ${MAX_DEVICES} devices. Sign out of one to use MuMu here.`, {
+      throw new AppError(403, `You're signed in on ${MAX_DEVICES} devices. Sign out of one to use Mu here.`, {
         code: "DEVICE_LIMIT",
         max: MAX_DEVICES,
         devices: others.map((d) => view(d)),

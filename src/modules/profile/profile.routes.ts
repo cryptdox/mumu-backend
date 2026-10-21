@@ -57,12 +57,12 @@ meRouter.get("/", authMiddleware, deviceMiddleware, asyncHandler(async (req, res
  * /api/me:
  *   delete:
  *     tags: [Profile]
- *     summary: Delete your MuMu account — all profiles you own and their content, your memberships and devices. The Cryptdox sign-in (IAM) is not deleted.
+ *     summary: Delete your Mu account — all profiles you own and their content, your memberships and devices. The Cryptdox sign-in (IAM) is not deleted.
  *     responses:
  *       200: { description: "{ deletedProfiles }" }
  */
 meRouter.delete("/", authMiddleware, asyncHandler(async (req, res) => {
-  send(res, 200, "Your MuMu account was deleted", await profileService.deleteAccount(req.user!.userId));
+  send(res, 200, "Your Mu account was deleted", await profileService.deleteAccount(req.user!.userId));
 }));
 
 meRouter.get("/devices", authMiddleware, asyncHandler(async (req, res) => {
