@@ -688,3 +688,28 @@ describe("admin", () => {
     assert.ok(ok(await api("GET", "/api/admin/overview", { token: boss.token })).providers >= 1);
   });
 });
+
+describe("account deletion", () => {
+  test("deleting your MuMu account removes your profiles and their content; others are untouched", async () => {
+    const zed = await login("zed");
+    const yan = await login("yan");
+    const shop = ok(await api("POST", "/api/profiles", { token: zed.token, body: { handle: "zedshop", displayName: "Zed Shop" } }), 201);
+    const post = ok(await api("POST", "/api/posts", { token: zed.token, as: shop.profileId, body: { text: "bye" } }), 201);
+    const chat = ok(await api("POST", "/api/conversations/direct", { token: yan.token, body: { profileId: zed.personalId } }));
+    ok(await api("POST", `/api/conversations/${chat.conversationId}/messages`, { token: zed.token, body: { text: "hi yan" } }), 201);
+    const yanPost = ok(await api("POST", "/api/posts", { token: yan.token, body: { text: "still here" } }), 201);
+    ok(await api("POST", `/api/posts/${yanPost.postId}/comments`, { token: zed.token, body: { text: "nice" } }), 201);
+
+    const res = ok(await api("DELETE", "/api/me", { token: zed.token }));
+    assert.equal(res.deletedProfiles, 2); // consumer + provider
+    assert.equal(await prisma.profile.count({ where: { profileId: { in: [zed.personalId, shop.profileId] } } }), 0);
+    assert.equal(await prisma.post.count({ where: { postId: post.postId } }), 0);
+    assert.equal(await prisma.message.count({ where: { senderProfileId: zed.personalId } }), 0);
+    assert.equal(await prisma.profileMember.count({ where: { userId: "zed" } }), 0);
+    // Yan's things stay (minus Zed's comment).
+    const kept = ok(await api("GET", `/api/posts/${yanPost.postId}`, { token: yan.token }));
+    assert.equal(kept.text, "still here");
+    assert.equal(kept.commentCount, 0);
+    assert.equal(ok(await api("GET", `/api/posts/${yanPost.postId}/comments`, { token: yan.token })).length, 0);
+  });
+});

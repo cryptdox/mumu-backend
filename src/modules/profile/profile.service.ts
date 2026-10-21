@@ -8,6 +8,8 @@ import { areFriends, follows, isBlocked } from "../connection/visibility";
 import { isOnline, joinProfileRoom, leaveProfileRoom } from "../../realtime/socket";
 import type { CreateBusinessDto, UpdateProfileDto } from "./profile.dto";
 import { getSettings } from "../admin/settings";
+import { storage } from "../../utils/storage";
+import logger from "../../utils/logger";
 
 /** "Abir.Hosen+x@mail.com" → "abir.hosen_x" (valid handle base). */
 function handleBase(email: string) {
@@ -177,6 +179,41 @@ class ProfileService {
     await prisma.profile.update({ where: { profileId }, data: { deletedAt: new Date(), handle: `deleted_${profileId}` } });
     const members = await prisma.profileMember.findMany({ where: { profileId }, select: { userId: true } });
     for (const m of members) leaveProfileRoom(m.userId, profileId);
+  }
+
+  /**
+   * Delete your MuMu account: every profile you OWN (consumer + providers) goes with all its
+   * content (posts, comments, reactions, messages, calls, lives, images, connections —
+   * cascades); you're removed from profiles you only help run; your devices are forgotten.
+   * Your Cryptdox (IAM) sign-in is shared with other apps and is not touched here.
+   */
+  async deleteAccount(userId: string) {
+    const owned = await prisma.profileMember.findMany({ where: { userId, role: "OWNER" }, select: { profileId: true } });
+    const ids = owned.map((o) => o.profileId);
+    const media = await prisma.media.findMany({ where: { ownerProfileId: { in: ids } }, select: { path: true } });
+    // Other people's posts they commented on / reacted to — recount those after.
+    const touched = [
+      ...new Set([
+        ...(await prisma.comment.findMany({ where: { authorProfileId: { in: ids } }, select: { postId: true } })).map((c) => c.postId),
+        ...(await prisma.reaction.findMany({ where: { profileId: { in: ids } }, select: { postId: true } })).map((r) => r.postId),
+      ]),
+    ];
+    await prisma.$transaction([
+      prisma.profile.deleteMany({ where: { profileId: { in: ids } } }),
+      prisma.profileMember.deleteMany({ where: { userId } }),
+      prisma.device.deleteMany({ where: { userId } }),
+    ]);
+    for (const postId of touched) {
+      const [commentCount, reactionCount] = await Promise.all([
+        prisma.comment.count({ where: { postId, deletedAt: null } }),
+        prisma.reaction.count({ where: { postId } }),
+      ]);
+      await prisma.post.updateMany({ where: { postId }, data: { commentCount, reactionCount } });
+    }
+    for (const m of media) await storage.remove(m.path).catch(() => undefined);
+    for (const id of ids) leaveProfileRoom(userId, id);
+    logger.info(`[Account] deleted MuMu data of ${userId}: ${ids.length} profile(s), ${media.length} image(s)`);
+    return { deletedProfiles: ids.length };
   }
 
   async members(actor: Actor, profileId: string) {
