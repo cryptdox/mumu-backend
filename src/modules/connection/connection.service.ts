@@ -14,16 +14,15 @@ async function target(profileId: string) {
 const pair = (a: string, b: string) => ({ OR: [{ requesterId: a, addresseeId: b }, { requesterId: b, addresseeId: a }] });
 
 class ConnectionService {
-  // ── Friends (personal ↔ personal) ──────────────────────────────────────────
+  // ── Connections ("Connect", mutual — any two profiles; stored as Friendship) ─
 
   async requestFriend(actor: Actor, profileId: string) {
     if (actor.profileId === profileId) throw BadRequest("That's you");
-    const other = await target(profileId);
-    if (actor.kind !== "PERSONAL" || other.kind !== "PERSONAL") throw BadRequest("Friends are between personal profiles — follow a business instead");
+    await target(profileId);
     if (await isBlocked(actor.profileId, profileId)) throw NotFound("Profile not found");
 
     const existing = await prisma.friendship.findFirst({ where: pair(actor.profileId, profileId) });
-    if (existing?.status === "ACCEPTED") throw Conflict("You're already friends");
+    if (existing?.status === "ACCEPTED") throw Conflict("You're already connected");
     if (existing && existing.requesterId === actor.profileId) throw Conflict("Request already sent");
     if (existing) return this.accept(actor, profileId); // they asked first → accept
 

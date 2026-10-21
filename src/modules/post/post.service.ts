@@ -27,7 +27,7 @@ function view(p: PostRow) {
   return { ...rest, author: toProfile(author), myReaction: reactions[0]?.type ?? null };
 }
 
-const live = { deletedAt: null, author: { deletedAt: null } } satisfies Prisma.PostWhereInput;
+const live = { deletedAt: null, author: { deletedAt: null, suspendedAt: null } } satisfies Prisma.PostWhereInput;
 
 class PostService {
   async create(actor: Actor, dto: CreatePostDto) {

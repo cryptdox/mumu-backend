@@ -12,6 +12,7 @@ import callRoutes from "./modules/call/call.routes";
 import liveRoutes from "./modules/live/live.routes";
 import notificationRoutes from "./modules/notification/notification.routes";
 import reportRoutes from "./modules/report/report.routes";
+import adminRoutes, { categoriesRouter } from "./modules/admin/admin.routes";
 
 const routers: Router = express.Router();
 
@@ -54,5 +55,7 @@ routers.use("/api/calls", callRoutes);
 routers.use("/api/live", liveRoutes);
 routers.use("/api/notifications", notificationRoutes);
 routers.use("/api/reports", reportRoutes);
+routers.use("/api/categories", categoriesRouter);
+routers.use("/api/admin", adminRoutes);
 
 export default routers;

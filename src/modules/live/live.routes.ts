@@ -36,10 +36,10 @@ const title = z.string().trim().min(1).max(100);
  *       required: true
  *       content:
  *         application/json:
- *           schema: { type: object, required: [title], properties: { title: { type: string }, audience: { type: string, enum: [PUBLIC, CONNECTIONS, ONLY_ME], default: PUBLIC } } }
+ *           schema: { type: object, required: [title], properties: { title: { type: string }, audience: { type: string, enum: [PUBLIC, CONNECTIONS, ONLY_ME], default: PUBLIC }, replace: { type: boolean, default: false, description: "End the stream you're already running and start this one" } } }
  *     responses:
  *       201: { description: "{ stream, rtc }" }
- *       409: { description: Already live }
+ *       409: { description: "ALREADY_LIVE (errors: liveStreamId, title) — confirm, then retry with replace: true" }
  * /api/live/{liveStreamId}:
  *   get:
  *     tags: [Live]
@@ -89,8 +89,8 @@ const title = z.string().trim().min(1).max(100);
 router.get("/", guard(R.LIVE, A.READ), asyncHandler(async (req, res) => {
   send(res, 200, "Live streams", await liveService.list(req.actor!));
 }));
-router.post("/", writeLimiter, guard(R.LIVE, A.CREATE), validate({ body: z.object({ title, audience: audienceSchema.default("PUBLIC") }) }), asyncHandler(async (req, res) => {
-  send(res, 201, "You're live", await liveService.start(req.actor!, req.body.title, req.body.audience));
+router.post("/", writeLimiter, guard(R.LIVE, A.CREATE), validate({ body: z.object({ title, audience: audienceSchema.default("PUBLIC"), replace: z.boolean().default(false) }) }), asyncHandler(async (req, res) => {
+  send(res, 201, "You're live", await liveService.start(req.actor!, req.body.title, req.body.audience, req.body.replace));
 }));
 router.get("/:liveStreamId", guard(R.LIVE, A.READ), sid, asyncHandler(async (req, res) => {
   send(res, 200, "Stream fetched", await liveService.get(req.actor!, req.params.liveStreamId as string));
@@ -100,6 +100,23 @@ router.patch("/:liveStreamId", guard(R.LIVE, A.UPDATE), validate({ params: idPar
 }));
 router.post("/:liveStreamId/watch", writeLimiter, guard(R.LIVE, A.READ), validate({ params: idParam("liveStreamId"), body: z.object({ takeover: z.boolean().default(false) }) }), asyncHandler(async (req, res) => {
   send(res, 200, "Watching", await liveService.watch(req.actor!, req.params.liveStreamId as string, req.body.takeover));
+}));
+/**
+ * @openapi
+ * /api/live/{liveStreamId}/react:
+ *   post:
+ *     tags: [Live]
+ *     summary: React during a live — floats an emoji for everyone watching ("live:reaction") and keeps your reaction on the live's post. ~6 taps/s per person.
+ *     parameters:
+ *       - { name: liveStreamId, in: path, required: true, schema: { type: string } }
+ *     requestBody:
+ *       required: true
+ *       content: { application/json: { schema: { type: object, properties: { type: { type: string, enum: [LIKE, LOVE, HAHA, WOW, SAD], default: LOVE } } } } }
+ *     responses:
+ *       200: { description: "{ floated }" }
+ */
+router.post("/:liveStreamId/react", guard(R.REACTION, A.CREATE), validate({ params: idParam("liveStreamId"), body: z.object({ type: z.enum(["LIKE", "LOVE", "HAHA", "WOW", "SAD"]).default("LOVE") }) }), asyncHandler(async (req, res) => {
+  send(res, 200, "Reacted", await liveService.react(req.actor!, req.params.liveStreamId as string, req.body.type));
 }));
 router.post("/:liveStreamId/leave", guard(R.LIVE, A.READ), sid, asyncHandler(async (req, res) => {
   send(res, 200, "Left", await liveService.leave(req.actor!, req.params.liveStreamId as string));

@@ -9,6 +9,28 @@ datasource db {
   provider = "postgresql"
 }
 
+// ── Admin-managed ───────────────────────────────────────────────────────────
+
+/// Provider categories (dropdown). Managed in the admin panel.
+model Category {
+  categoryId String    @id @default(uuid())
+  name       String    @unique
+  sortOrder  Int       @default(0)
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  profiles   Profile[]
+
+  @@index([isActive, sortOrder])
+}
+
+/// App-wide settings (key → JSON value). Known keys and defaults: src/modules/admin/settings.ts.
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+}
+
 // ── Devices ─────────────────────────────────────────────────────────────────
 
 /// A browser / phone an account uses (x-device-id). At most 3 active per account.
@@ -26,8 +48,8 @@ model Device {
 // ── Profiles ────────────────────────────────────────────────────────────────
 
 enum ProfileKind {
-  PERSONAL // the consumer side — one per account, created on first sign-in
-  BUSINESS // the producer side — pages for a business, brand or creator
+  PERSONAL // "Consumer" in the app — one per account, created on first sign-in, hidden unless consumer mode
+  BUSINESS // "Provider" in the app — the default identity; set up on first sign-in
 }
 
 enum MemberRole {
@@ -42,15 +64,18 @@ model Profile {
   handle        String      @unique // @name, lowercase
   displayName   String
   bio           String?
-  category      String? // business category ("Bakery", "Software")
+  categoryId    String? // provider category, from the admin-managed list
   website       String?
   avatarMediaId String?
   coverMediaId  String?
   isVerified    Boolean     @default(false)
+  /// Suspended by an admin: can't be used, hidden from search and feeds.
+  suspendedAt   DateTime?
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
   deletedAt     DateTime?
 
+  category Category?      @relation(fields: [categoryId], references: [categoryId], onDelete: SetNull)
   avatar  Media?          @relation("ProfileAvatar", fields: [avatarMediaId], references: [mediaId], onDelete: SetNull)
   cover   Media?          @relation("ProfileCover", fields: [coverMediaId], references: [mediaId], onDelete: SetNull)
   members ProfileMember[]

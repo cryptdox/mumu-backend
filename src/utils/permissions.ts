@@ -51,3 +51,12 @@ export async function canModerate(req: Request, resource: Resource): Promise<boo
   const permissions = await loadPermissions(req);
   return !!permissions && hasPermission(permissions, resource, [TypeAction.READ_ALL]);
 }
+
+/**
+ * App admins (the admin panel): hold MU_PROFILE READ_ALL *and* UPDATE — the IAM ADMIN role
+ * of client "mu". MANAGER (moderation) and AUDITOR (read-only) don't have both.
+ */
+export async function isAppAdmin(req: Request): Promise<boolean> {
+  const permissions = await loadPermissions(req);
+  return !!permissions && hasPermission(permissions, Resource.PROFILE, [TypeAction.READ_ALL]) && hasPermission(permissions, Resource.PROFILE, [TypeAction.UPDATE]);
+}

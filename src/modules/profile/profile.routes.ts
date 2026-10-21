@@ -9,6 +9,7 @@ import profileService from "./profile.service";
 import deviceService from "../device/device.service";
 import { deviceMiddleware } from "../../middlewares/device.middleware";
 import { deviceIdOf } from "../device/device.service";
+import { isAppAdmin } from "../../utils/permissions";
 import { addMemberSchema, createBusinessSchema, searchQuery, updateProfileSchema } from "./profile.dto";
 
 const router: Router = express.Router();
@@ -29,7 +30,7 @@ router.use(authMiddleware, actorMiddleware);
  */
 export const meRouter: Router = express.Router();
 meRouter.get("/", authMiddleware, deviceMiddleware, asyncHandler(async (req, res) => {
-  send(res, 200, "Account fetched", await profileService.me(req.user!.userId, req.user!.email));
+  send(res, 200, "Account fetched", await profileService.me(req.user!.userId, req.user!.email, await isAppAdmin(req)));
 }));
 
 /**

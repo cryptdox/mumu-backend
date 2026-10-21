@@ -7,6 +7,7 @@ import { profileCardSelect, profileSelect, toProfile } from "./profile.view";
 import { areFriends, follows, isBlocked } from "../connection/visibility";
 import { isOnline, joinProfileRoom, leaveProfileRoom } from "../../realtime/socket";
 import type { CreateBusinessDto, UpdateProfileDto } from "./profile.dto";
+import { getSettings } from "../admin/settings";
 
 /** "Abir.Hosen+x@mail.com" → "abir.hosen_x" (valid handle base). */
 function handleBase(email: string) {
@@ -48,6 +49,12 @@ export async function ensurePersonalProfile(userId: string, email: string) {
   throw Conflict("Couldn't pick a unique handle — try again");
 }
 
+async function assertCategory(categoryId: string | null | undefined) {
+  if (!categoryId) return;
+  const c = await prisma.category.findFirst({ where: { categoryId, isActive: true } });
+  if (!c) throw BadRequest("Pick a category from the list");
+}
+
 async function assertOwnMedia(actorProfileId: string, mediaId: string | null | undefined) {
   if (!mediaId) return;
   const media = await prisma.media.findUnique({ where: { mediaId }, select: { ownerProfileId: true } });
@@ -55,8 +62,11 @@ async function assertOwnMedia(actorProfileId: string, mediaId: string | null | u
 }
 
 class ProfileService {
-  /** Your account and every profile you can switch to. */
-  async me(userId: string, email: string) {
+  /**
+   * Your account and every profile you can switch to. `needsSetup`: no Provider profile yet
+   * (the app shows its setup screen). `isAdmin`: may open the admin panel.
+   */
+  async me(userId: string, email: string, isAdmin = false) {
     await ensurePersonalProfile(userId, email);
     const memberships = await prisma.profileMember.findMany({
       where: { userId, profile: { deletedAt: null } },
@@ -66,12 +76,22 @@ class ProfileService {
     const profiles = memberships
       .map((m) => ({ ...toProfile(m.profile), role: m.role }))
       .sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "PERSONAL" ? -1 : 1));
-    return { userId, email, profiles };
+    const settings = await getSettings();
+    return {
+      userId,
+      email,
+      profiles,
+      needsSetup: !profiles.some((p) => p.kind === "BUSINESS"),
+      isAdmin,
+      settings: { consumerModeEnabled: settings.consumerModeEnabled, liveEnabled: settings.liveEnabled },
+    };
   }
 
   async createBusiness(actor: Actor, dto: CreateBusinessDto) {
     const owned = await prisma.profileMember.count({ where: { userId: actor.userId, role: "OWNER", profile: { kind: "BUSINESS", deletedAt: null } } });
-    if (owned >= 10) throw Conflict("You can own at most 10 business profiles");
+    const { maxProvidersPerAccount } = await getSettings();
+    if (owned >= maxProvidersPerAccount) throw Conflict(`You can own at most ${maxProvidersPerAccount} provider profiles`);
+    await assertCategory(dto.categoryId);
     const profile = await prisma.profile.create({
       data: { kind: "BUSINESS", ...dto, members: { create: { userId: actor.userId, role: "OWNER" } } },
       select: profileSelect,
@@ -82,7 +102,7 @@ class ProfileService {
 
   private async findLive(idOrHandle: string) {
     const where = /^[0-9a-f-]{36}$/i.test(idOrHandle) ? { profileId: idOrHandle } : { handle: idOrHandle.toLowerCase().replace(/^@/, "") };
-    const profile = await prisma.profile.findFirst({ where: { ...where, deletedAt: null }, select: profileSelect });
+    const profile = await prisma.profile.findFirst({ where: { ...where, deletedAt: null, suspendedAt: null }, select: profileSelect });
     if (!profile) throw NotFound("Profile not found");
     return profile;
   }
@@ -121,6 +141,7 @@ class ProfileService {
     const rows = await prisma.profile.findMany({
       where: {
         deletedAt: null,
+        suspendedAt: null,
         ...(kind && { kind }),
         OR: [{ handle: { startsWith: term.toLowerCase() } }, { displayName: { contains: term, mode: "insensitive" } }],
         NOT: { blocking: { some: { blockedId: viewer.profileId } } },
@@ -142,6 +163,7 @@ class ProfileService {
     await this.requireManager(actor, profileId);
     await assertOwnMedia(profileId, dto.avatarMediaId);
     await assertOwnMedia(profileId, dto.coverMediaId);
+    await assertCategory(dto.categoryId);
     const profile = await prisma.profile.update({ where: { profileId }, data: dto, select: profileSelect });
     return toProfile(profile);
   }

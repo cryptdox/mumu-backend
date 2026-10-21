@@ -10,6 +10,7 @@ async function bootstrapSystem() {
 const TABLES = [
   "Report", "Notification", "LiveStream", "Call", "Message", "ConversationMember", "Conversation",
   "Reaction", "Comment", "Post", "Media", "Block", "Follow", "Friendship", "ProfileMember", "Profile", "Device",
+  "Category", "AppSetting",
 ];
 
 /** Empty every table (tests and RESET_DB=true in development only). */

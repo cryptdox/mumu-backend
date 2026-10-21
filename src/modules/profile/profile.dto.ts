@@ -25,7 +25,8 @@ const optionalText = (max: number) => z.string().trim().max(max).nullable().opti
  *         handle: { type: string, example: "sunrise.bakery" }
  *         displayName: { type: string }
  *         bio: { type: string, nullable: true }
- *         category: { type: string, nullable: true }
+ *         category: { type: string, nullable: true, description: Category name }
+ *         categoryId: { type: string, nullable: true }
  *         website: { type: string, nullable: true }
  *         avatarUrl: { type: string, nullable: true }
  *         coverUrl: { type: string, nullable: true }
@@ -36,7 +37,7 @@ const optionalText = (max: number) => z.string().trim().max(max).nullable().opti
  *       properties:
  *         handle: { type: string }
  *         displayName: { type: string }
- *         category: { type: string }
+ *         categoryId: { type: string, description: From GET /api/categories }
  *         bio: { type: string }
  *         website: { type: string }
  *     UpdateProfileDto:
@@ -45,7 +46,7 @@ const optionalText = (max: number) => z.string().trim().max(max).nullable().opti
  *         handle: { type: string }
  *         displayName: { type: string }
  *         bio: { type: string, nullable: true }
- *         category: { type: string, nullable: true }
+ *         categoryId: { type: string, nullable: true }
  *         website: { type: string, nullable: true }
  *         avatarMediaId: { type: string, nullable: true }
  *         coverMediaId: { type: string, nullable: true }
@@ -53,7 +54,7 @@ const optionalText = (max: number) => z.string().trim().max(max).nullable().opti
 export const createBusinessSchema = z.object({
   handle: handleSchema,
   displayName: z.string().trim().min(1).max(60),
-  category: optionalText(40),
+  categoryId: z.string().min(1).max(64).nullable().optional(),
   bio: optionalText(300),
   website: z.url().max(200).nullable().optional(),
 });
@@ -63,7 +64,7 @@ export const updateProfileSchema = z
   .object({
     handle: handleSchema,
     displayName: z.string().trim().min(1).max(60),
-    category: optionalText(40),
+    categoryId: z.string().min(1).max(64).nullable(),
     bio: optionalText(300),
     website: z.url().max(200).nullable(),
     avatarMediaId: z.string().nullable(),

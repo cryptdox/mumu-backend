@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import type { Request } from "express";
 import prisma from "../../prisma/client";
-import { BadRequest, Conflict, Forbidden, NotFound } from "../../utils/errors";
+import { BadRequest, Forbidden, NotFound } from "../../utils/errors";
 import { Resource } from "../../utils/consts";
 import { canModerate } from "../../utils/permissions";
 import { issueRtcToken } from "../../utils/rtc";
@@ -9,6 +9,9 @@ import logger from "../../utils/logger";
 import type { Actor } from "../../middlewares/actor.middleware";
 import { emitToLive, emitToProfiles, onLiveAudienceChange } from "../../realtime/socket";
 import { AppError } from "../../utils/errors";
+import type { ReactionType } from "@prisma/client";
+import postService from "../post/post.service";
+import { getSettings } from "../admin/settings";
 import { profileCardSelect, toProfile } from "../profile/profile.view";
 import { canSee, viewerGraph } from "../connection/visibility";
 import { notify } from "../notification/notification.service";
@@ -31,11 +34,26 @@ async function audienceOf(hostId: string, audience: Audience) {
   return [...new Set([...followers.map((f) => f.followerId), ...friends.map((f) => (f.requesterId === hostId ? f.addresseeId : f.requesterId))])];
 }
 
+/** Recent reaction taps per stream+profile (rate limit for floating emojis). */
+const tapLog = new Map<string, number[]>();
+setInterval(() => {
+  const cutoff = Date.now() - 5000;
+  for (const [k, v] of tapLog) if (!v.some((t) => t > cutoff)) tapLog.delete(k);
+}, 30_000).unref();
+
 class LiveService {
   /** Go live as the active profile. Creates a feed post that links to the stream. */
-  async start(actor: Actor, title: string, audience: Audience) {
+  /**
+   * Go live as the active profile. Already live? 409 ALREADY_LIVE (with the running stream)
+   * so the app can warn — with `replace` the old stream is ended and a new one started.
+   */
+  async start(actor: Actor, title: string, audience: Audience, replace = false) {
+    if (!(await getSettings()).liveEnabled) throw Forbidden("Going live is turned off right now");
     const running = await prisma.liveStream.findFirst({ where: { hostProfileId: actor.profileId, status: "LIVE" } });
-    if (running) throw Conflict("You're already live — end that stream first");
+    if (running && !replace) {
+      throw new AppError(409, "You're already live", { code: "ALREADY_LIVE", liveStreamId: running.liveStreamId, title: running.title });
+    }
+    if (running) await endStream(running.liveStreamId);
     const rtcChannel = channelFor(actor.profileId);
     const rtc = await issueRtcToken(actor.profileId, rtcChannel, "HOST");
     const stream = await prisma.liveStream.create({
@@ -59,7 +77,7 @@ class LiveService {
       where: {
         status: "LIVE",
         hostProfileId: { notIn: g.blocked },
-        host: { deletedAt: null },
+        host: { deletedAt: null, suspendedAt: null },
         OR: [{ hostProfileId: me }, { audience: "PUBLIC" }, { audience: "CONNECTIONS", hostProfileId: { in: g.connectionAuthors } }],
       },
       include,
@@ -104,6 +122,26 @@ class LiveService {
   /** Kept for older clients; leaving is detected from the socket. */
   async leave(actor: Actor, liveStreamId: string) {
     return view(await this.visible(actor, liveStreamId));
+  }
+
+  /**
+   * React during a live: the reaction is kept on the live's post (one per profile, like any
+   * post reaction), and every tap floats an emoji up on everyone's screen ("live:reaction").
+   * Taps beyond ~6/s per profile are dropped (no error) so nobody can flood the stream.
+   */
+  async react(actor: Actor, liveStreamId: string, type: ReactionType) {
+    const s = await this.visible(actor, liveStreamId);
+    if (s.status !== "LIVE" || !s.post) throw BadRequest("This stream has ended");
+    const key = `${liveStreamId}:${actor.profileId}`;
+    const now = Date.now();
+    const recent = (tapLog.get(key) ?? []).filter((t) => now - t < 1000);
+    if (recent.length >= 6) return { floated: false };
+    recent.push(now);
+    tapLog.set(key, recent);
+    emitToLive(liveStreamId, "live:reaction", { liveStreamId, type, profileId: actor.profileId });
+    // Persist the latest reaction (changes it if different) — not on every tap.
+    if (recent.length === 1) await postService.react(actor, s.post.postId, type).catch(() => undefined);
+    return { floated: true };
   }
 
   async update(actor: Actor, liveStreamId: string, dto: { title?: string; audience?: Audience }) {

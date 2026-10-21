@@ -200,7 +200,7 @@ describe("auth & profiles", () => {
 });
 
 describe("connections", () => {
-  test("friend request → accept; reciprocal request auto-accepts; businesses can't be friends", async () => {
+  test("connect request → accept; reciprocal request auto-accepts; providers can connect too", async () => {
     const dan = await login("dan");
     const eve = await login("eve");
     const fay = await login("fay");
@@ -218,7 +218,10 @@ describe("connections", () => {
     assert.equal(view.counts.friends, 2);
 
     const shop = ok(await api("POST", "/api/profiles", { token: dan.token, body: { handle: "danshop", displayName: "Dan Shop" } }), 201);
-    assert.equal((await api("POST", `/api/connections/friends/${shop.profileId}`, { token: eve.token })).status, 400);
+    // Providers connect with providers (and anyone).
+    const eveShop = ok(await api("POST", "/api/profiles", { token: eve.token, body: { handle: "eveshop", displayName: "Eve Shop" } }), 201);
+    ok(await api("POST", `/api/connections/friends/${shop.profileId}`, { token: eve.token, as: eveShop.profileId }));
+    assert.deepEqual(ok(await api("POST", `/api/connections/friends/${eveShop.profileId}/accept`, { token: dan.token, as: shop.profileId })), { friendStatus: "FRIENDS" });
     ok(await api("POST", `/api/connections/follows/${shop.profileId}`, { token: eve.token }));
     const followers = ok(await api("GET", `/api/connections/${shop.profileId}/followers`, { token: eve.token }));
     assert.deepEqual(followers.map((p: any) => p.handle), ["eve"]);
@@ -499,7 +502,10 @@ describe("live (MUMU RTC)", () => {
     assert.equal(live.rtc.channel, `live_${studio.profileId}`);
     assert.equal((await announced).liveStreamId, live.stream.liveStreamId);
     assert.equal(ok(await api("GET", "/api/notifications", { token: kai.token })).items[0].type, "LIVE_STARTED");
-    assert.equal((await api("POST", "/api/live", { token: jay.token, as: studio.profileId, body: { title: "again" } })).status, 409);
+    const again = await api("POST", "/api/live", { token: jay.token, as: studio.profileId, body: { title: "again" } });
+    assert.equal(again.status, 409);
+    assert.equal(again.body.errors.code, "ALREADY_LIVE");
+    assert.equal(again.body.errors.title, "Baking live");
 
     // Followers-only: kai sees it, lou doesn't.
     assert.deepEqual(ok(await api("GET", "/api/live", { token: kai.token })).map((s: any) => s.title), ["Baking live"]);
@@ -542,6 +548,16 @@ describe("live (MUMU RTC)", () => {
     assert.equal((await pushed).author.handle, "kai");
     const studioNotes = ok(await api("GET", "/api/notifications", { token: jay.token, as: studio.profileId }));
     assert.ok(!studioNotes.items.some((n: any) => n.type === "POST_COMMENT"), "no comment notifications while live");
+    // Reactions float for everyone and stay on the live's post; tapping fast is capped.
+    const floated = next(kaiSocket, "live:reaction");
+    ok(await api("POST", `/api/live/${live.stream.liveStreamId}/react`, { token: kai.token, body: { type: "LOVE" } }));
+    assert.deepEqual(await floated, { liveStreamId: live.stream.liveStreamId, type: "LOVE", profileId: kai.personalId });
+    const taps = await Promise.all(Array.from({ length: 10 }, () => api("POST", `/api/live/${live.stream.liveStreamId}/react`, { token: kai.token, body: { type: "LOVE" } })));
+    assert.ok(taps.filter((t) => t.body.data.floated).length <= 6, "taps beyond ~6/s are dropped");
+    const reacted = ok(await api("GET", `/api/posts/${live.stream.postId}`, { token: kai.token }));
+    assert.equal(reacted.myReaction, "LOVE");
+    assert.equal(reacted.reactionCount, 1);
+
     const removed = next(kaiSocket, "live:comment-removed");
     ok(await api("DELETE", `/api/posts/comments/${said.commentId}`, { token: kai.token }));
     assert.equal((await removed).commentId, said.commentId);
@@ -552,6 +568,12 @@ describe("live (MUMU RTC)", () => {
     ok(await api("POST", `/api/live/${live.stream.liveStreamId}/end`, { token: jay.token, as: studio.profileId }));
     assert.equal((await ended).status, "ENDED");
     assert.equal((await api("POST", `/api/live/${live.stream.liveStreamId}/watch`, { token: kai.token })).status, 400);
+    // Replacing: confirm → the running live ends and a new one starts.
+    const first = ok(await api("POST", "/api/live", { token: jay.token, as: studio.profileId, body: { title: "Take one" } }), 201);
+    const second = ok(await api("POST", "/api/live", { token: jay.token, as: studio.profileId, body: { title: "Take two", replace: true } }), 201);
+    assert.equal(ok(await api("GET", `/api/live/${first.stream.liveStreamId}`, { token: jay.token, as: studio.profileId })).status, "ENDED");
+    assert.equal(second.stream.status, "LIVE");
+    ok(await api("POST", `/api/live/${second.stream.liveStreamId}/end`, { token: jay.token, as: studio.profileId }));
     // After the live, the chat is the post's comments in the feed.
     const kept = ok(await api("GET", `/api/posts/${live.stream.postId}/comments`, { token: kai.token }));
     assert.deepEqual(kept.map((c: any) => c.text), ["Stays on the post"]);
@@ -626,5 +648,43 @@ describe("devices", () => {
     // Now the phone is the "other device".
     assert.equal((await api("POST", `/api/live/${sid}/watch`, { token: wyn.token, device: phone })).status, 409);
     ok(await api("POST", `/api/live/${sid}/end`, { token: wyn.token, device: laptop }));
+  });
+});
+
+describe("admin", () => {
+  test("only admins; categories feed the provider dropdown; settings; suspending a profile", async () => {
+    const boss = await login("boss", "ADMIN");
+    const plain = await login("plainuser");
+    assert.equal((await api("GET", "/api/admin/overview", { token: plain.token })).status, 403);
+    const meAdmin = ok(await api("GET", "/api/me", { token: boss.token }));
+    assert.equal(meAdmin.isAdmin, true);
+    assert.equal(meAdmin.needsSetup, true); // no provider profile yet
+    assert.equal(ok(await api("GET", "/api/me", { token: plain.token })).isAdmin, false);
+
+    const bakery = ok(await api("POST", "/api/admin/categories", { token: boss.token, body: { name: "Bakery" } }), 201);
+    const hidden = ok(await api("POST", "/api/admin/categories", { token: boss.token, body: { name: "Hidden" } }), 201);
+    ok(await api("PATCH", `/api/admin/categories/${hidden.categoryId}`, { token: boss.token, body: { isActive: false } }));
+    const publicList = ok(await api("GET", "/api/categories"));
+    assert.ok(publicList.some((c: any) => c.name === "Bakery") && !publicList.some((c: any) => c.name === "Hidden"));
+
+    assert.equal((await api("POST", "/api/profiles", { token: plain.token, body: { handle: "nocat", displayName: "x", categoryId: hidden.categoryId } })).status, 400);
+    const shop = ok(await api("POST", "/api/profiles", { token: plain.token, body: { handle: "plainbakes", displayName: "Plain Bakes", categoryId: bakery.categoryId } }), 201);
+    assert.equal(shop.category, "Bakery");
+    assert.equal(ok(await api("GET", "/api/me", { token: plain.token })).needsSetup, false);
+    assert.equal((await api("DELETE", `/api/admin/categories/${bakery.categoryId}`, { token: boss.token })).status, 400); // in use
+
+    ok(await api("PUT", "/api/admin/settings", { token: boss.token, body: { liveEnabled: false } }));
+    assert.equal((await api("POST", "/api/live", { token: plain.token, as: shop.profileId, body: { title: "nope" } })).status, 403);
+    ok(await api("PUT", "/api/admin/settings", { token: boss.token, body: { liveEnabled: true } }));
+
+    ok(await api("PATCH", `/api/admin/profiles/${shop.profileId}`, { token: boss.token, body: { suspended: true, isVerified: true } }));
+    const blocked = await api("GET", "/api/posts/feed", { token: plain.token, as: shop.profileId });
+    assert.equal(blocked.body.errors.code, "PROFILE_SUSPENDED");
+    assert.ok(!ok(await api("GET", "/api/profiles/search?q=plainbakes", { token: boss.token })).length);
+    const suspendedList = ok(await api("GET", "/api/admin/profiles?status=suspended", { token: boss.token }));
+    assert.equal(suspendedList.items[0].handle, "plainbakes");
+    ok(await api("PATCH", `/api/admin/profiles/${shop.profileId}`, { token: boss.token, body: { suspended: false } }));
+    ok(await api("GET", "/api/posts/feed", { token: plain.token, as: shop.profileId }));
+    assert.ok(ok(await api("GET", "/api/admin/overview", { token: boss.token })).providers >= 1);
   });
 });

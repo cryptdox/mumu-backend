@@ -37,10 +37,13 @@ const resolveActor = async (req: Request, res: Response, next: NextFunction) => 
     }
     const member = await prisma.profileMember.findUnique({
       where: { profileId_userId: { profileId: requested, userId: user.userId } },
-      include: { profile: { select: { kind: true, deletedAt: true } } },
+      include: { profile: { select: { kind: true, deletedAt: true, suspendedAt: true } } },
     });
     if (!member || member.profile.deletedAt) {
       return res.status(403).json({ success: false, status: 403, message: "You can't act as this profile" });
+    }
+    if (member.profile.suspendedAt) {
+      return res.status(403).json({ success: false, status: 403, message: "This profile is suspended", errors: { code: "PROFILE_SUSPENDED" } });
     }
     req.actor = { userId: user.userId, profileId: requested, kind: member.profile.kind, role: member.role, deviceId: req.deviceId };
     next();

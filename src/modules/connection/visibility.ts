@@ -32,7 +32,9 @@ export async function canSee(viewerId: string, author: { profileId: string; kind
   if (audience === "ONLY_ME") return false;
   if (await isBlocked(viewerId, author.profileId)) return false;
   if (audience === "PUBLIC") return true;
-  return author.kind === "PERSONAL" ? areFriends(viewerId, author.profileId) : follows(viewerId, author.profileId);
+  // Connections see it; for providers, followers do too.
+  if (await areFriends(viewerId, author.profileId)) return true;
+  return author.kind === "BUSINESS" && follows(viewerId, author.profileId);
 }
 
 /** Profiles whose CONNECTIONS-audience content the viewer may see, plus blocked ids. */
