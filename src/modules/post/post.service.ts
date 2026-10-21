@@ -9,6 +9,7 @@ import { profileCardSelect, toProfile } from "../profile/profile.view";
 import { assertOwnMedia } from "../profile/profile.service";
 import { canSee, viewerGraph } from "../connection/visibility";
 import { notify } from "../notification/notification.service";
+import { emitToLive } from "../../realtime/socket";
 import type { CreatePostDto } from "./post.dto";
 
 const postInclude = (viewerId: string) =>
@@ -172,10 +173,15 @@ class PostService {
       }),
       prisma.post.update({ where: { postId }, data: { commentCount: { increment: 1 } } }),
     ]);
-    await notify(post.authorProfileId, "POST_COMMENT", actor.profileId, postId);
-    if (parentAuthor && parentAuthor !== post.authorProfileId) await notify(parentAuthor, "COMMENT_REPLY", actor.profileId, postId);
     const { author, ...rest } = comment;
-    return { ...rest, author: toProfile(author) };
+    const view = { ...rest, author: toProfile(author) };
+    // A live's post: its comments are the live chat — push to everyone watching. The host
+    // sees them on screen, so no notification per message while the stream is on.
+    const onAir = post.liveStream?.status === "LIVE";
+    if (post.liveStream) emitToLive(post.liveStream.liveStreamId, "live:comment", view);
+    if (!onAir) await notify(post.authorProfileId, "POST_COMMENT", actor.profileId, postId);
+    if (parentAuthor && parentAuthor !== post.authorProfileId) await notify(parentAuthor, "COMMENT_REPLY", actor.profileId, postId);
+    return view;
   }
 
   /** The comment's author, the post's author, or a moderator (MU_COMMENT READ_ALL). */
@@ -186,10 +192,11 @@ class PostService {
     const allowed =
       comment.authorProfileId === actor.profileId || comment.post.authorProfileId === actor.profileId || (await canModerate(req, Resource.COMMENT));
     if (!allowed) throw Forbidden("You can't delete this comment");
-    await prisma.$transaction([
+    const [, post] = await prisma.$transaction([
       prisma.comment.update({ where: { commentId }, data: { deletedAt: new Date() } }),
-      prisma.post.update({ where: { postId: comment.postId }, data: { commentCount: { decrement: 1 } } }),
+      prisma.post.update({ where: { postId: comment.postId }, data: { commentCount: { decrement: 1 } }, select: { liveStreamId: true } }),
     ]);
+    if (post.liveStreamId) emitToLive(post.liveStreamId, "live:comment-removed", { commentId });
   }
 }
 

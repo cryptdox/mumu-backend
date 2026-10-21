@@ -4,7 +4,7 @@ import { NotFound } from "../../utils/errors";
 import type { Actor } from "../../middlewares/actor.middleware";
 import { profileCardSelect, toProfile } from "../profile/profile.view";
 import { activeMemberIds, messageInclude, messageView } from "../conversation/conversation.service";
-import { emitToProfiles } from "../../realtime/socket";
+import { emitToLive, emitToProfiles } from "../../realtime/socket";
 import { endStream } from "../live/live.service";
 
 async function targetExists(type: ReportTarget, id: string) {
@@ -23,7 +23,8 @@ async function takeDown(type: ReportTarget, id: string) {
   if (type === "POST") await prisma.post.update({ where: { postId: id }, data: { deletedAt: now } });
   if (type === "COMMENT") {
     const c = await prisma.comment.update({ where: { commentId: id }, data: { deletedAt: now } });
-    await prisma.post.update({ where: { postId: c.postId }, data: { commentCount: { decrement: 1 } } });
+    const post = await prisma.post.update({ where: { postId: c.postId }, data: { commentCount: { decrement: 1 } }, select: { liveStreamId: true } });
+    if (post.liveStreamId) emitToLive(post.liveStreamId, "live:comment-removed", { commentId: id });
   }
   if (type === "MESSAGE") {
     const m = await prisma.message.update({ where: { messageId: id }, data: { text: null, mediaId: null, deletedAt: now }, include: messageInclude });

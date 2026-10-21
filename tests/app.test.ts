@@ -534,11 +534,28 @@ describe("live (MUMU RTC)", () => {
     const post = ok(await api("GET", `/api/posts/${live.stream.postId}`, { token: kai.token }));
     assert.equal(post.liveStream.status, "LIVE");
 
+    // Live chat = comments on the live's post: pushed to viewers, kept on the post afterwards,
+    // and no notification per message for the host while on air.
+    const pushed = next(kaiSocket, "live:comment", (c) => c.text === "Love this stream!");
+    const said = ok(await api("POST", `/api/posts/${live.stream.postId}/comments`, { token: kai.token, body: { text: "Love this stream!" } }), 201);
+    assert.equal((await pushed).commentId, said.commentId);
+    assert.equal((await pushed).author.handle, "kai");
+    const studioNotes = ok(await api("GET", "/api/notifications", { token: jay.token, as: studio.profileId }));
+    assert.ok(!studioNotes.items.some((n: any) => n.type === "POST_COMMENT"), "no comment notifications while live");
+    const removed = next(kaiSocket, "live:comment-removed");
+    ok(await api("DELETE", `/api/posts/comments/${said.commentId}`, { token: kai.token }));
+    assert.equal((await removed).commentId, said.commentId);
+    ok(await api("POST", `/api/posts/${live.stream.postId}/comments`, { token: kai.token, body: { text: "Stays on the post" } }), 201);
+
     assert.equal((await api("POST", `/api/live/${live.stream.liveStreamId}/end`, { token: kai.token })).status, 403);
     const ended = next(kaiSocket, "live:updated", (s) => s.status === "ENDED");
     ok(await api("POST", `/api/live/${live.stream.liveStreamId}/end`, { token: jay.token, as: studio.profileId }));
     assert.equal((await ended).status, "ENDED");
     assert.equal((await api("POST", `/api/live/${live.stream.liveStreamId}/watch`, { token: kai.token })).status, 400);
+    // After the live, the chat is the post's comments in the feed.
+    const kept = ok(await api("GET", `/api/posts/${live.stream.postId}/comments`, { token: kai.token }));
+    assert.deepEqual(kept.map((c: any) => c.text), ["Stays on the post"]);
+    assert.equal(ok(await api("GET", `/api/posts/${live.stream.postId}`, { token: kai.token })).commentCount, 1);
   });
 });
 
