@@ -66,7 +66,8 @@ class LiveService {
       orderBy: [{ viewerCount: "desc" }, { startedAt: "desc" }],
       take: 50,
     });
-    return rows.map(view);
+    // Your own live: say whether it's broadcasting from this device or another of yours.
+    return rows.map((r) => ({ ...view(r), ...(r.hostProfileId === me && { onThisDevice: !r.hostDeviceId || r.hostDeviceId === actor.deviceId }) }));
   }
 
   private async visible(actor: Actor, liveStreamId: string) {
