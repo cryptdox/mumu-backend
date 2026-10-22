@@ -33,7 +33,9 @@ class ConnectionService {
 
   async accept(actor: Actor, requesterId: string) {
     const request = await prisma.friendship.findUnique({ where: { requesterId_addresseeId: { requesterId, addresseeId: actor.profileId } } });
-    if (!request || request.status !== "PENDING") throw NotFound("No pending request from this profile");
+    // A second tap (or a slow network retry) after it went through is fine, not an error.
+    if (request?.status === "ACCEPTED") return { friendStatus: "FRIENDS" as const };
+    if (!request) throw NotFound("No pending request from this profile");
     await prisma.friendship.update({
       where: { requesterId_addresseeId: { requesterId, addresseeId: actor.profileId } },
       data: { status: "ACCEPTED", respondedAt: new Date() },
@@ -44,8 +46,8 @@ class ConnectionService {
 
   /** Decline, cancel or unfriend — all remove the row. */
   async removeFriend(actor: Actor, profileId: string) {
-    const { count } = await prisma.friendship.deleteMany({ where: pair(actor.profileId, profileId) });
-    if (!count) throw NotFound("No friendship or request with this profile");
+    // Already gone (double tap, or they cancelled first) is the result you wanted.
+    await prisma.friendship.deleteMany({ where: pair(actor.profileId, profileId) });
     return { friendStatus: "NONE" as const };
   }
 

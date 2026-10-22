@@ -6,6 +6,7 @@ import { issueRtcToken } from "../../utils/rtc";
 import logger from "../../utils/logger";
 import type { Actor } from "../../middlewares/actor.middleware";
 import { emitToProfiles } from "../../realtime/socket";
+import { pushCallStopped, pushIncomingCall } from "../../utils/push";
 import { profileCardSelect, toProfile } from "../profile/profile.view";
 import { isBlocked } from "../connection/visibility";
 import { notify } from "../notification/notification.service";
@@ -38,6 +39,7 @@ async function finish(callId: string, status: "ENDED" | "MISSED") {
     const others = (await activeMemberIds(call.conversationId)).filter((id) => id !== call.startedById);
     await notify(others, "MISSED_CALL", call.startedById, call.conversationId);
   }
+  void activeMemberIds(call.conversationId).then((ids) => pushCallStopped(callId, ids));
   return broadcast(callId);
 }
 
@@ -60,7 +62,9 @@ class CallService {
     await postMessage(conversationId, actor.profileId, { kind: "CALL", callId: call.callId });
     const view = await callView(call.callId);
     // `to` = which of the callee's profiles is being called (they may manage several).
-    for (const id of members.filter((m) => m !== actor.profileId)) emitToProfiles([id], "call:ring", { ...view, to: id });
+    const callees = members.filter((m) => m !== actor.profileId);
+    for (const id of callees) emitToProfiles([id], "call:ring", { ...view, to: id });
+    void pushIncomingCall(view, callees); // rings phones where the app is closed
     return { call: view, rtc };
   }
 
@@ -72,6 +76,7 @@ class CallService {
     const rtc = await issueRtcToken(actor.profileId, call.rtcChannel, "PUBLISHER");
     if (call.status === "RINGING" && actor.profileId !== call.startedById) {
       await prisma.call.update({ where: { callId }, data: { status: "ONGOING", answeredAt: new Date() } });
+      void pushCallStopped(callId, [actor.profileId]); // your other phones stop ringing
       return { call: await broadcast(callId), rtc };
     }
     return { call: await callView(callId), rtc };
@@ -85,6 +90,7 @@ class CallService {
     if (call.status !== "RINGING") return callView(callId);
     if (call.conversation.type === "DIRECT") return finish(callId, "ENDED");
     emitToProfiles([call.startedById], "call:declined", { callId, profileId: actor.profileId });
+    void pushCallStopped(callId, [actor.profileId]);
     return callView(callId);
   }
 

@@ -88,3 +88,9 @@ export enum TypeResource {
   SERVICE = "SERVICE",
   DATASET = "DATASET",
 }
+
+// Push (Firebase Cloud Messaging) — the Android app rings for calls even when closed.
+// FIREBASE_SERVICE_ACCOUNT = the service-account JSON (raw or base64). Unset = push off.
+export const FIREBASE_SERVICE_ACCOUNT = process.env.FIREBASE_SERVICE_ACCOUNT ?? "";
+/** Signs the "Decline" button in a call notification (the phone has no session there). */
+export const PUSH_ACTION_SECRET = process.env.PUSH_ACTION_SECRET || MUMU_RTC_API_SECRET || "dev-push-secret";

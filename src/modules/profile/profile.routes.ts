@@ -2,7 +2,8 @@ import express, { Router } from "express";
 import { authMiddleware } from "../../middlewares/auth.middleware";
 import { actorMiddleware } from "../../middlewares/actor.middleware";
 import { writeLimiter } from "../../middlewares/rateLimit.middleware";
-import { asyncHandler } from "../../utils/errors";
+import { asyncHandler, BadRequest } from "../../utils/errors";
+import { z } from "zod";
 import { guard, R, A } from "../../utils/guard";
 import { idParam, send, validate } from "../../utils/http";
 import profileService from "./profile.service";
@@ -67,6 +68,26 @@ meRouter.delete("/", authMiddleware, asyncHandler(async (req, res) => {
 
 meRouter.get("/devices", authMiddleware, asyncHandler(async (req, res) => {
   send(res, 200, "Devices fetched", await deviceService.list(req.user!.userId, deviceIdOf(req)));
+}));
+/**
+ * @openapi
+ * /api/me/devices/current/push:
+ *   put:
+ *     tags: [Profile]
+ *     summary: Set this device's push token (Android app; null to stop push). Needs x-device-id.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object, required: [token], properties: { token: { type: string, nullable: true } } }
+ *     responses:
+ *       200: { description: Saved }
+ */
+meRouter.put("/devices/current/push", authMiddleware, validate({ body: z.object({ token: z.string().min(20).max(4096).nullable() }) }), asyncHandler(async (req, res) => {
+  const deviceId = deviceIdOf(req);
+  if (!deviceId) throw BadRequest("x-device-id header required");
+  await deviceService.setPushToken(req.user!.userId, deviceId, req.body.token);
+  send(res, 200, "Push token saved");
 }));
 meRouter.delete("/devices/:deviceId", authMiddleware, validate({ params: idParam("deviceId") }), asyncHandler(async (req, res) => {
   await deviceService.signOut(req.user!.userId, req.params.deviceId as string);

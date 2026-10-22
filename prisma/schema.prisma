@@ -41,6 +41,7 @@ model Device {
   createdAt  DateTime  @default(now())
   lastSeenAt DateTime  @default(now())
   revokedAt  DateTime? // signed out (from this or another device)
+  pushToken  String? // Firebase Cloud Messaging token (Android app) — rings calls when the app is closed
 
   @@id([userId, deviceId])
 }

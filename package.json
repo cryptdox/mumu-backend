@@ -1,7 +1,7 @@
 {
   "name": "mumu-backend",
   "version": "1.0.0",
-  "description": "MuMu \u2014 messaging-first social app on MUMU RTC (crypt-iam auth).",
+  "description": "MuMu — messaging-first social app on MUMU RTC (crypt-iam auth).",
   "keywords": [
     "ts"
   ],
@@ -44,6 +44,7 @@
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.1",
+    "firebase-admin": "^14.5.0",
     "i18next": "^25.8.4",
     "i18next-fs-backend": "^2.6.1",
     "i18next-http-middleware": "^3.9.2",

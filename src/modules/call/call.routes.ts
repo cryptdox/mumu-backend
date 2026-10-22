@@ -1,16 +1,42 @@
 import express, { Router } from "express";
 import { z } from "zod";
 import { authMiddleware } from "../../middlewares/auth.middleware";
-import { actorMiddleware } from "../../middlewares/actor.middleware";
+import { actorMiddleware, type Actor } from "../../middlewares/actor.middleware";
+import { verifyDeclineSig } from "../../utils/push";
 import { writeLimiter } from "../../middlewares/rateLimit.middleware";
-import { asyncHandler } from "../../utils/errors";
+import { asyncHandler, Forbidden } from "../../utils/errors";
 import { guard, R, A } from "../../utils/guard";
 import { idParam, send, validate } from "../../utils/http";
 import callService from "./call.service";
 
 const router: Router = express.Router();
-router.use(authMiddleware, actorMiddleware);
 const callId = validate({ params: idParam("callId") });
+
+/**
+ * @openapi
+ * /api/calls/{callId}/push-decline:
+ *   post:
+ *     tags: [Calls]
+ *     summary: Decline from the phone's call notification (no session there — signed by the push)
+ *     parameters:
+ *       - { name: callId, in: path, required: true, schema: { type: string } }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object, required: [profileId, sig], properties: { profileId: { type: string }, sig: { type: string } } }
+ *     responses:
+ *       200: { description: Call }
+ *       403: { description: Bad signature }
+ */
+router.post("/:callId/push-decline", writeLimiter, callId, validate({ body: z.object({ profileId: z.string().min(1).max(64), sig: z.string().min(10).max(128) }) }), asyncHandler(async (req, res) => {
+  const id = req.params.callId as string;
+  if (!verifyDeclineSig(id, req.body.profileId, req.body.sig)) throw Forbidden("Invalid signature");
+  const actor = { userId: "", profileId: req.body.profileId, kind: "BUSINESS", role: "OWNER" } as Actor;
+  send(res, 200, "Declined", await callService.decline(actor, id));
+}));
+
+router.use(authMiddleware, actorMiddleware);
 
 /**
  * @openapi

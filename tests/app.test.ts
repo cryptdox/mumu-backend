@@ -27,6 +27,7 @@ import iamRedis, { ConnectIamRedis } from "../src/utils/iam.redis";
 import { wipeAllTables } from "../src/utils/bootstrap";
 import { attachRealtime, closeRealtime } from "../src/realtime/socket";
 import { sweepCalls } from "../src/modules/call/call.service";
+import { declineSig } from "../src/utils/push";
 import { IAM_CLIENT_ID } from "../src/utils/consts";
 
 const matrix = JSON.parse(fs.readFileSync(path.join(__dirname, "../scripts/role-matrix.json"), "utf8"));
@@ -463,6 +464,26 @@ describe("calls (MUMU RTC)", () => {
 
     const gil = await login("gil");
     assert.equal((await api("POST", `/api/calls/${started.call.callId}/join`, { token: gil.token })).status, 404);
+  });
+
+  test("phone push: device token saved; Decline from the notification needs the push's signature", async () => {
+    const jon = await login("jon");
+    const kim = await login("kim");
+    const token = "fcm-token-" + "x".repeat(40);
+    ok(await api("GET", "/api/me", { token: kim.token, device: "kim-phone-1" }));
+    ok(await api("PUT", "/api/me/devices/current/push", { token: kim.token, device: "kim-phone-1", body: { token } }));
+    assert.equal((await prisma.device.findFirst({ where: { deviceId: "kim-phone-1" } }))?.pushToken, token);
+    assert.equal((await api("PUT", "/api/me/devices/current/push", { token: kim.token, body: { token } })).status, 400); // no x-device-id
+
+    const chat = ok(await api("POST", "/api/conversations/direct", { token: jon.token, body: { profileId: kim.personalId } }));
+    const { call } = ok(await api("POST", "/api/calls", { token: jon.token, body: { conversationId: chat.conversationId, type: "AUDIO" } }), 201);
+    const url = `/api/calls/${call.callId}/push-decline`;
+    assert.equal((await api("POST", url, { body: { profileId: kim.personalId, sig: "forged-signature-123" } })).status, 403);
+    assert.equal((await api("POST", url, { body: { profileId: kim.personalId, sig: declineSig(call.callId, jon.personalId) } })).status, 403); // someone else's
+    assert.equal(ok(await api("POST", url, { body: { profileId: kim.personalId, sig: declineSig(call.callId, kim.personalId) } })).status, "ENDED");
+
+    ok(await api("PUT", "/api/me/devices/current/push", { token: kim.token, device: "kim-phone-1", body: { token: null } }));
+    assert.equal((await prisma.device.findFirst({ where: { deviceId: "kim-phone-1" } }))?.pushToken, null);
   });
 
   test("unanswered calls become MISSED; plan limits come back as 402", async () => {

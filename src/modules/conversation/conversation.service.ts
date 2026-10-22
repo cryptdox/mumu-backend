@@ -1,3 +1,4 @@
+import { pushNewMessage } from "../../utils/push";
 import { Prisma } from "@prisma/client";
 import type { Request } from "express";
 import prisma from "../../prisma/client";
@@ -55,6 +56,7 @@ export async function postMessage(conversationId: string, senderProfileId: strin
   ]);
   const view = messageView(message);
   emitToProfiles(await activeMemberIds(conversationId), "message:new", view);
+  void pushNewMessage(view); // notification on phones where the app is closed
   return view;
 }
 

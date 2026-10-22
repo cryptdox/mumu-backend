@@ -68,6 +68,12 @@ export async function admitDevice(userId: string, deviceId: string, tokenIssuedA
 }
 
 class DeviceService {
+  /** One phone, one token: a token moving to another account/device is taken off the old one. */
+  async setPushToken(userId: string, deviceId: string, token: string | null) {
+    if (token) await prisma.device.updateMany({ where: { pushToken: token, NOT: { userId, deviceId } }, data: { pushToken: null } });
+    await prisma.device.updateMany({ where: { userId, deviceId }, data: { pushToken: token } });
+  }
+
   async list(userId: string, current?: string) {
     const rows = await prisma.device.findMany({ where: activeWhere(userId), orderBy: { lastSeenAt: "desc" } });
     return { max: MAX_DEVICES, devices: rows.map((d) => view(d, current)) };
